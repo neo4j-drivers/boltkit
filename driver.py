@@ -590,7 +590,6 @@ MESSAGES = {
     "IGNORED": 0x7E,            # 0111 1110 // IGNORED <metadata>
     "FAILURE": 0x7F,            # 0111 1111 // FAILURE <metadata>
 }
-SUMMARY_MESSAGES = {MESSAGES["SUCCESS"], MESSAGES["FAILURE"], MESSAGES["IGNORED"]}
 
 
 def print_message(signature, *fields):
@@ -660,12 +659,11 @@ class Connection(object):
         message = unpack(b"".join(data))
         print_message(*message)
         self.inbox.append(message)
+        return message[0] == MESSAGES["RECORD"]
 
     def fetch(self):
-        done = False
-        while not done:
-            self.fetch_one()
-            done = self.inbox[-1][0] in SUMMARY_MESSAGES
+        while self.fetch_one():
+            pass
 
     def close(self):
         disconnect(self.socket)
@@ -709,18 +707,27 @@ def disconnect(socket):
 # CHAPTER 3: SESSIONS
 # ===================
 
-# TODO
+class Session(object):
+
+    def __init__(self, address, user_agent, auth_token):
+        self.connection = connect(address)
+        self.connection.add_init(user_agent, auth_token)
+        self.connection.dispatch()
+        self.connection.fetch()
+
+    def run(self, statement, parameters):
+        self.connection.add_run(statement, parameters)
+        self.connection.add_pull_all()
+        self.connection.dispatch()
+        self.connection.fetch()
+        self.connection.fetch()
+
+    def close(self):
+        self.connection.close()
 
 
 if __name__ == "__main__":
-    bolt = connect(("localhost", 7687))
-    bolt.add_init("ExampleDriver/1.1",
-                  {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
-    bolt.dispatch()
-    bolt.fetch()
-    bolt.add_run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
-    bolt.add_pull_all()
-    bolt.dispatch()
-    bolt.fetch()
-    bolt.fetch()
-    bolt.close()
+    session = Session(("localhost", 7687), "ExampleDriver/1.1",
+                      {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
+    session.run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
+    session.close()
