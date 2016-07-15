@@ -347,7 +347,6 @@ def pack(*values):
         #   D4     | 8-bit big-endian unsigned integer            | 255 items
         #   D5     | 16-bit big-endian unsigned integer           | 65 535 items
         #   D6     | 32-bit big-endian unsigned integer           | 4 294 967 295 items
-        #   D7     | no size, runs until DF marker is encountered | unlimited
         #
         # For lists containing fewer than 16 items, including empty lists, the marker byte should
         # contain the high-order nibble '9' (binary 1001) followed by a low-order nibble containing
@@ -385,6 +384,40 @@ def pack(*values):
                 raise ValueError("List too long to pack")
             extend(map(pack, value))
 
+        # Maps
+        # ----
+        # Maps are sets of key-value pairs that permit a mixture of types within the same map. The
+        # size of a map denotes the number of pairs within that map, not the total packed byte
+        # size. The markers used to denote a map are described in the table below:
+        #
+        #   Marker | Size                                         | Maximum size
+        #  ========|==============================================|=======================
+        #   A0..AF | contained within low-order nibble of marker  | 15 entries
+        #   D8     | 8-bit big-endian unsigned integer            | 255 entries
+        #   D9     | 16-bit big-endian unsigned integer           | 65 535 entries
+        #   DA     | 32-bit big-endian unsigned integer           | 4 294 967 295 entries
+        #
+        # For maps containing fewer than 16 key-value pairs, including empty maps, the marker byte
+        # should contain the high-order nibble 'A' (binary 1010) followed by a low-order nibble
+        # containing the size. The entries within the map are then serialised in [key, value,
+        # key, value] order immediately after the marker. Keys are generally text values.
+        #
+        # For maps containing 16 pairs or more, the marker D8, D9 or DA should be used, depending
+        # on scale. This marker is followed by the size and map entries. Examples follow below:
+        #
+        #     {} -> A0
+        #
+        #     {"one": "eins"} -> A1:83:6F:6E:65:84:65:69:6E:73
+        #
+        #     {"A": 1, "B": 2 ... "Z": 26} -> D8:1A:81:45:05:81:57:17:81:42:02:81:4A:0A:81:41:01
+        #                                     81:53:13:81:4B:0B:81:49:09:81:4E:0E:81:55:15:81:4D
+        #                                     0D:81:4C:0C:81:5A:1A:81:54:14:81:56:16:81:43:03:81
+        #                                     59:19:81:44:04:81:47:07:81:46:06:81:50:10:81:58:18
+        #                                     81:51:11:81:4F:0F:81:48:08:81:52:12
+        #
+        # The order in which map entries are encoded is not important; maps are, by definition,
+        # unordered.
+        #
         elif isinstance(value, dict):
             size = len(value)
             if size < 0x10:
@@ -402,6 +435,38 @@ def pack(*values):
                 raise ValueError("Dictionary too long to pack")
             extend(pack(k, v) for k, v in value.items())
 
+        # Structures
+        # ----------
+        # Structures represent composite values and consist, beyond the marker, of a single byte
+        # signature followed by a sequence of fields, each an individual value. The size of a
+        # structure is measured as the number of fields and not the total byte size. This count
+        # does not include the signature. The markers used to denote a  structure are described in
+        # the table below:
+        #
+        #   Marker | Size                                        | Maximum size
+        #  ========|=============================================|=======================
+        #   B0..BF | contained within low-order nibble of marker | 15 fields
+        #   DC     | 8-bit big-endian unsigned integer           | 255 fields
+        #   DD     | 16-bit big-endian unsigned integer          | 65 535 fields
+        #
+        # The signature byte is used to identify the type or class of the structure. Signature
+        # bytes may hold any value between 0 and +127. Bytes with the high bit set are reserved
+        # for future expansion. For structures containing fewer than 16 fields, the marker byte
+        # should contain the high-order nibble 'B' (binary 1011) followed by a low-order nibble
+        # containing the size. The marker is immediately followed by the signature byte and the
+        # field values.
+        #
+        # For structures containing 16 fields or more, the marker DC or DD should be used,
+        # depending on scale. This marker is followed by the size, the signature byte and the
+        # fields, serialised in order. Examples follow below:
+        #
+        #     B3 01 01 02 03  -- Struct(sig=0x01, fields=[1,2,3])
+        #     DC 10 7F 01  02 03 04 05  06 07 08 09  00 01 02 03
+        #     04 05 06  -- Struct(sig=0x7F, fields=[1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6]
+        #
+        # In this demo, we've chosen to equate a structure with a tuple for simplicity. Here,
+        # the first tuple entry denotes the signature and the remainder the fields.
+        #
         elif isinstance(value, tuple):
             signature, fields = value[0], value[1:]
             size = len(fields)
@@ -418,9 +483,14 @@ def pack(*values):
             append(raw_pack(UINT_8, signature))
             extend(map(pack, fields))
 
+        # For anything else, we'll just raise an error as we don't know how to encode it.
+        #
         else:
             raise TypeError("Cannot pack objects of type %s" % type(value).__name__)
 
+    # Finally, we can glue all the individual pieces together and return the full byte
+    # representation of the original values.
+    #
     return b"".join(packed)
 
 
