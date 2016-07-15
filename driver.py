@@ -608,25 +608,25 @@ class Connection(object):
         self.inbox = []
         self.outbox = []
 
-    def enqueue_init(self, user_agent, auth_token):
+    def add_init(self, user_agent, auth_token):
         self.outbox.append((MESSAGES["INIT"], user_agent, auth_token))
 
-    def enqueue_ack_failure(self):
+    def add_ack_failure(self):
         self.outbox.append((MESSAGES["ACK_FAILURE"],))
 
-    def enqueue_reset(self):
+    def add_reset(self):
         self.outbox.append((MESSAGES["RESET"],))
 
-    def enqueue_run(self, statement, parameters):
+    def add_run(self, statement, parameters):
         self.outbox.append((MESSAGES["RUN"], statement, parameters))
 
-    def enqueue_discard_all(self):
+    def add_discard_all(self):
         self.outbox.append((MESSAGES["DISCARD_ALL"],))
 
-    def enqueue_pull_all(self):
+    def add_pull_all(self):
         self.outbox.append((MESSAGES["PULL_ALL"],))
 
-    def send_requests(self):
+    def dispatch(self):
         """ Send messages to an open socket.
         """
         data = []
@@ -644,7 +644,7 @@ class Connection(object):
 
         self.socket.sendmsg(data)
 
-    def fetch_message(self):
+    def fetch_one(self):
         """ Receive exactly one message from an open socket
         """
 
@@ -661,10 +661,10 @@ class Connection(object):
         print_message(*message)
         self.inbox.append(message)
 
-    def fetch_response(self):
+    def fetch(self):
         done = False
         while not done:
-            self.fetch_message()
+            self.fetch_one()
             done = self.inbox[-1][0] in SUMMARY_MESSAGES
 
     def close(self):
@@ -714,13 +714,13 @@ def disconnect(socket):
 
 if __name__ == "__main__":
     bolt = connect(("localhost", 7687))
-    bolt.enqueue_init("ExampleDriver/1.1",
-                      {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
-    bolt.send_requests()
-    bolt.fetch_response()
-    bolt.enqueue_run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
-    bolt.enqueue_pull_all()
-    bolt.send_requests()
-    bolt.fetch_response()
-    bolt.fetch_response()
+    bolt.add_init("ExampleDriver/1.1",
+                  {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
+    bolt.dispatch()
+    bolt.fetch()
+    bolt.add_run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
+    bolt.add_pull_all()
+    bolt.dispatch()
+    bolt.fetch()
+    bolt.fetch()
     bolt.close()
