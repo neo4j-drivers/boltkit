@@ -58,9 +58,14 @@ Neo4j Bolt driver can be thought of as composed of three layers...
 """
 
 # You'll need to make sure you have the following items handy...
+from collections import deque
 from socket import create_connection, SHUT_RDWR
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import version_info
+try:
+    from urllib.parse import urlparse
+except ImportError:
+    from urlparse import urlparse
 
 
 # Before we go any further, we just need to do a bit of magic to work around some Python domestic
@@ -574,6 +579,7 @@ def unpack(data, offset=0):
 # CHAPTER 2: MESSAGING
 # ====================
 
+DEFAULT_PORT = 7687
 MAGIC = b"\x60\x60\xB0\x17"
 MAX_CHUNK_SIZE = 65535
 
@@ -643,7 +649,7 @@ class Connection(object):
 
         self.socket.sendmsg(data)
 
-    def fetch_one(self):
+    def fetch_next(self):
         """ Receive exactly one message from an open socket
         """
 
@@ -662,19 +668,20 @@ class Connection(object):
         return message[0] == MESSAGES["RECORD"]
 
     def fetch(self):
-        while self.fetch_one():
+        while self.fetch_next():
             pass
 
     def close(self):
         disconnect(self.socket)
 
 
-def connect(address):
+def connect(host, port):
     """ Connect and perform a handshake in order to return a valid
     Connection object, assuming a protocol version can be agreed.
     """
 
     # Establish a connection to the host and port specified
+    address = (host, port)
     print("~~ [CONNECT] %s:%d" % address)
     socket = create_connection(address)
 
@@ -707,13 +714,67 @@ def disconnect(socket):
 # CHAPTER 3: SESSIONS
 # ===================
 
+
+class ConnectionPool(object):
+
+    def __init__(self, host, port, user_agent, auth_token):
+        self.host = host
+        self.port = port
+        self.user_agent = user_agent
+        self.auth_token = auth_token
+        self.connections = deque()
+
+    def acquire(self):
+        """ Acquire connection from pool
+        """
+        try:
+            connection = self.connections.popleft()
+        except IndexError:
+            connection = connect(self.host, self.port)
+            connection.add_init(self.user_agent, self.auth_token)
+            connection.dispatch()
+            connection.fetch()
+        return connection
+
+    def release(self, connection):
+        """ Release connection back into pool.
+        """
+        connection.add_reset()
+        connection.dispatch()
+        connection.fetch()
+        self.connections.append(connection)
+
+    def close(self):
+        connections = self.connections
+        while connections:
+            connections.popleft().close()
+
+
+class Driver(object):
+
+    def __init__(self, uri, user_agent, auth_token):
+        parsed = urlparse(uri)
+        if parsed.scheme == "bolt":
+            self.connection_pool = ConnectionPool(parsed.hostname, parsed.port or DEFAULT_PORT,
+                                                  user_agent, auth_token)
+        else:
+            raise ValueError("Unsupported URI scheme %r" % parsed.scheme)
+
+    def session(self):
+        return Session(self.connection_pool)
+
+    def close(self):
+        self.connection_pool.close()
+
+
 class Session(object):
 
-    def __init__(self, address, user_agent, auth_token):
-        self.connection = connect(address)
-        self.connection.add_init(user_agent, auth_token)
-        self.connection.dispatch()
-        self.connection.fetch()
+    def __init__(self, connection_pool):
+        self.connection_pool = connection_pool
+        self.connection = self.connection_pool.acquire()
+
+    def __del__(self):
+        self.connection_pool.release(self.connection)
 
     def run(self, statement, parameters):
         self.connection.add_run(statement, parameters)
@@ -722,12 +783,19 @@ class Session(object):
         self.connection.fetch()
         self.connection.fetch()
 
-    def close(self):
-        self.connection.close()
+
+def main():
+    driver = Driver("bolt://localhost:7687", "ExampleDriver/1.1",
+                    {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
+    session = driver.session()
+    session.run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
+    del session
+    import gc; gc.collect()
+    session = driver.session()
+    session.run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
+    del session
+    driver.close()
 
 
 if __name__ == "__main__":
-    session = Session(("localhost", 7687), "ExampleDriver/1.1",
-                      {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
-    session.run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
-    session.close()
+    main()
