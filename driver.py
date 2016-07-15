@@ -774,7 +774,7 @@ class Session(object):
         self.connection = self.connection_pool.acquire()
 
     def __del__(self):
-        self.connection_pool.release(self.connection)
+        self.close()
 
     def run(self, statement, parameters):
         self.connection.add_run(statement, parameters)
@@ -782,6 +782,12 @@ class Session(object):
         self.connection.dispatch()
         self.connection.fetch()
         self.connection.fetch()
+
+    def close(self):
+        if self.connection:
+            connection = self.connection
+            self.connection = None
+            self.connection_pool.release(connection)
 
 
 def main():
