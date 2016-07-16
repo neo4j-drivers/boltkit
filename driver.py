@@ -578,6 +578,8 @@ def unpack(data, offset=0):
 # CHAPTER 2: MESSAGING
 # ====================
 
+# TODO (protocol logging occurs here)
+
 DEFAULT_PORT = 7687
 MAGIC = b"\x60\x60\xB0\x17"
 MAX_CHUNK_SIZE = 65535
@@ -616,26 +618,32 @@ class Connection(object):
         self.inbox = []
         self.outbox = []
 
+    def add(self, *request):
+        response = []
+        self.outbox.append(request)
+        self.inbox.append(response)
+        return response
+
     def add_init(self, user_agent, auth_token):
-        self.outbox.append((MESSAGES["INIT"], user_agent, auth_token))
+        return self.add(MESSAGES["INIT"], user_agent, auth_token)
 
     def add_ack_failure(self):
-        self.outbox.append((MESSAGES["ACK_FAILURE"],))
+        return self.add(MESSAGES["ACK_FAILURE"])
 
     def add_reset(self):
-        self.outbox.append((MESSAGES["RESET"],))
+        return self.add(MESSAGES["RESET"])
 
     def add_run(self, statement, parameters):
-        self.outbox.append((MESSAGES["RUN"], statement, parameters))
+        return self.add(MESSAGES["RUN"], statement, parameters)
 
     def add_discard_all(self):
-        self.outbox.append((MESSAGES["DISCARD_ALL"],))
+        return self.add(MESSAGES["DISCARD_ALL"])
 
     def add_pull_all(self):
-        self.outbox.append((MESSAGES["PULL_ALL"],))
+        return self.add(MESSAGES["PULL_ALL"])
 
     def dispatch(self):
-        """ Send messages to an open socket.
+        """ Send everything in the outbox to the server.
         """
         data = []
 
@@ -650,9 +658,10 @@ class Connection(object):
                 data.append(chunk)
             data.append(raw_pack(UINT_16, 0))
 
-        self.socket.sendmsg(data)
+        if data:
+            self.socket.sendmsg(data)
 
-    def fetch_next(self):
+    def fetch(self):
         """ Receive exactly one message from an open socket
         """
 
@@ -667,26 +676,34 @@ class Connection(object):
 
         message = unpack(b"".join(data))
         log_message("S", *message)
-        self.inbox.append(message)
-        return message[0] == MESSAGES["RECORD"]
 
-    def fetch(self):
-        while self.fetch_next():
-            pass
+        more = message[0] == MESSAGES["RECORD"]
+        if more:
+            response = self.inbox[0]
+        else:
+            response = self.inbox.pop(0)
+        response.append(message)
+        return more
+
+    def sync(self, response):
+        self.dispatch()
+        while response in self.inbox:
+            while self.fetch():
+                pass
 
     def close(self):
         log("~~ [DISCONNECT]")
         self.socket.close()
 
 
-def connect(host, port):
+def connect(address):
     """ Connect and perform a handshake in order to return a valid
     Connection object, assuming a protocol version can be agreed.
     """
 
     # Establish a connection to the host and port specified
-    log("~~ [CONNECT] %s:%d", host, port)
-    socket = create_connection((host, port))
+    log("~~ [CONNECT] %r", address)
+    socket = create_connection(address)
 
     log("C: [MAGIC] %s", h(MAGIC))
     socket.sendall(MAGIC)
@@ -715,9 +732,8 @@ def connect(host, port):
 
 class ConnectionPool(object):
 
-    def __init__(self, host, port, user_agent, auth_token):
-        self.host = host
-        self.port = port
+    def __init__(self, address, user_agent, auth_token):
+        self.address = address
         self.user_agent = user_agent
         self.auth_token = auth_token
         self.connections = set()
@@ -728,19 +744,17 @@ class ConnectionPool(object):
         try:
             connection = self.connections.pop()
         except KeyError:
-            connection = connect(self.host, self.port)
-            connection.add_init(self.user_agent, self.auth_token)
-            connection.dispatch()
-            connection.fetch()
+            connection = connect(self.address)
+            init = connection.add_init(self.user_agent, self.auth_token)
+            connection.sync(init)
         return connection
 
     def release(self, connection):
         """ Release connection back into pool.
         """
         if connection not in self.connections:
-            connection.add_reset()
-            connection.dispatch()
-            connection.fetch()
+            response = connection.add_reset()
+            connection.sync(response)
             self.connections.add(connection)
 
     def close(self):
@@ -753,8 +767,8 @@ class Driver(object):
     def __init__(self, uri, user_agent, auth_token):
         parsed = urlparse(uri)
         if parsed.scheme == "bolt":
-            self.connection_pool = ConnectionPool(parsed.hostname, parsed.port or DEFAULT_PORT,
-                                                  user_agent, auth_token)
+            address = parsed.hostname, parsed.port or DEFAULT_PORT
+            self.connection_pool = ConnectionPool(address, user_agent, auth_token)
         else:
             raise ValueError("Unsupported URI scheme %r" % parsed.scheme)
 
@@ -775,11 +789,7 @@ class Session(object):
         self.close()
 
     def run(self, statement, parameters):
-        self.connection.add_run(statement, parameters)
-        self.connection.add_pull_all()
-        self.connection.dispatch()
-        self.connection.fetch()
-        self.connection.fetch()
+        return StatementResult(self.connection, statement, parameters)
 
     def close(self):
         if self.connection:
@@ -787,15 +797,27 @@ class Session(object):
             self.connection = None
 
 
+class StatementResult(object):
+
+    def __init__(self, connection, statement, parameters):
+        self.connection = connection
+        self.run_response = connection.add_run(statement, parameters)
+        self.pull_all_response = connection.add_pull_all()
+
+    def consume(self):
+        self.connection.sync(self.pull_all_response)
+
+
 def main():
     driver = Driver("bolt://localhost:7687", "ExampleDriver/1.1",
                     {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
     session = driver.session()
-    session.run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
-    del session
-    import gc; gc.collect()
-    session = driver.session()
-    session.run("UNWIND range(1, {size}) AS n RETURN n", {"size": 10})
+    result = session.run("UNWIND range(101, 100 + {size}) AS n RETURN n", {"size": 10})
+    #result.consume()
+    #del session
+    #import gc; gc.collect()
+    #session = driver.session()
+    session.run("UNWIND range(201, 200 + {size}) AS n RETURN n", {"size": 10}).consume()
     del session
     driver.close()
 
