@@ -58,6 +58,7 @@ Neo4j Bolt driver can be thought of as composed of three layers...
 """
 
 # You'll need to make sure you have the following items handy...
+from collections import deque
 from socket import create_connection
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import version_info
@@ -608,6 +609,13 @@ def log_message(peer, signature, *fields):
     log("%s: %s %s", peer, message_name, " ".join(map(repr, fields)))
 
 
+class Failure(Exception):
+
+    def __init__(self, metadata):
+        super(Failure, self).__init__(metadata["message"])
+        self.code = metadata["code"]
+
+
 class Connection(object):
     """ Server connection through which all protocol messages
     are sent and received.
@@ -615,40 +623,32 @@ class Connection(object):
 
     def __init__(self, socket):
         self.socket = socket
-        self.inbox = []
-        self.outbox = []
+        self.requests = deque()
+        self.responses = deque()
 
     def add(self, *request):
-        response = []
-        self.outbox.append(request)
-        self.inbox.append(response)
+        response = deque()
+        self.requests.append(request)
+        self.responses.append(response)
         return response
 
-    def add_init(self, user_agent, auth_token):
-        return self.add(MESSAGES["INIT"], user_agent, auth_token)
+    def init(self, user_agent, auth_token):
+        return self.sync(self.add(MESSAGES["INIT"], user_agent, auth_token))
 
-    def add_ack_failure(self):
-        return self.add(MESSAGES["ACK_FAILURE"])
+    def reset(self):
+        return self.sync(self.add(MESSAGES["RESET"]))
 
-    def add_reset(self):
-        return self.add(MESSAGES["RESET"])
-
-    def add_run(self, statement, parameters):
-        return self.add(MESSAGES["RUN"], statement, parameters)
-
-    def add_discard_all(self):
-        return self.add(MESSAGES["DISCARD_ALL"])
-
-    def add_pull_all(self):
-        return self.add(MESSAGES["PULL_ALL"])
+    def add_statement(self, statement, parameters, discard=False):
+        return (self.add(MESSAGES["RUN"], statement, parameters),
+                self.add(MESSAGES["DISCARD_ALL" if discard else "PULL_ALL"]))
 
     def dispatch(self):
-        """ Send everything in the outbox to the server.
+        """ Send all pending requests to the server.
         """
         data = []
 
-        while self.outbox:
-            message = self.outbox.pop(0)
+        while self.requests:
+            message = self.requests.popleft()
             log_message("C", *message)
             packed = pack(message)
             for offset in range(0, len(packed), MAX_CHUNK_SIZE):
@@ -659,7 +659,7 @@ class Connection(object):
             data.append(raw_pack(UINT_16, 0))
 
         if data:
-            self.socket.sendmsg(data)
+            self.socket.sendall(b"".join(data))
 
     def fetch(self):
         """ Receive exactly one message from an open socket
@@ -677,19 +677,26 @@ class Connection(object):
         message = unpack(b"".join(data))
         log_message("S", *message)
 
-        more = message[0] == MESSAGES["RECORD"]
+        signature = message[0]
+        more = signature == MESSAGES["RECORD"]
         if more:
-            response = self.inbox[0]
+            response = self.responses[0]
         else:
-            response = self.inbox.pop(0)
+            response = self.responses.popleft()
         response.append(message)
-        return more
+        if signature == MESSAGES["FAILURE"]:
+            self.add(MESSAGES["ACK_FAILURE"])
+            # TODO handle failure on ack_failure (close connection)
+            raise Failure(message[1])
+        else:
+            return more
 
     def sync(self, response):
         self.dispatch()
-        while response in self.inbox:
+        while response in self.responses:
             while self.fetch():
                 pass
+        return response
 
     def close(self):
         log("~~ [DISCONNECT]")
@@ -730,6 +737,11 @@ def connect(address):
 # ===================
 
 
+class ProtocolError(Exception):
+
+    pass
+
+
 class ConnectionPool(object):
 
     def __init__(self, address, user_agent, auth_token):
@@ -745,17 +757,24 @@ class ConnectionPool(object):
             connection = self.connections.pop()
         except KeyError:
             connection = connect(self.address)
-            init = connection.add_init(self.user_agent, self.auth_token)
-            connection.sync(init)
+            try:
+                connection.init(self.user_agent, self.auth_token)
+            except Failure:
+                connection.close()
+                raise ProtocolError("Failed to init connection")
         return connection
 
     def release(self, connection):
         """ Release connection back into pool.
         """
         if connection not in self.connections:
-            response = connection.add_reset()
-            connection.sync(response)
-            self.connections.add(connection)
+            try:
+                connection.reset()
+            except Failure:
+                connection.close()
+                raise ProtocolError("Failed to reset connection")
+            else:
+                self.connections.add(connection)
 
     def close(self):
         while self.connections:
@@ -781,6 +800,8 @@ class Driver(object):
 
 class Session(object):
 
+    connection = None  # Declared here as the destructor references it
+
     def __init__(self, connection_pool):
         self.connection_pool = connection_pool
         self.connection = self.connection_pool.acquire()
@@ -801,11 +822,10 @@ class StatementResult(object):
 
     def __init__(self, connection, statement, parameters):
         self.connection = connection
-        self.run_response = connection.add_run(statement, parameters)
-        self.pull_all_response = connection.add_pull_all()
+        self.responses = connection.add_statement(statement, parameters)
 
     def consume(self):
-        self.connection.sync(self.pull_all_response)
+        self.connection.sync(self.responses[-1])
 
 
 def main():
