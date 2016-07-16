@@ -58,8 +58,7 @@ Neo4j Bolt driver can be thought of as composed of three layers...
 """
 
 # You'll need to make sure you have the following items handy...
-from collections import deque
-from socket import create_connection, SHUT_RDWR
+from socket import create_connection
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import version_info
 try:
@@ -721,14 +720,14 @@ class ConnectionPool(object):
         self.port = port
         self.user_agent = user_agent
         self.auth_token = auth_token
-        self.connections = deque()
+        self.connections = set()
 
     def acquire(self):
         """ Acquire connection from pool
         """
         try:
-            connection = self.connections.popleft()
-        except IndexError:
+            connection = self.connections.pop()
+        except KeyError:
             connection = connect(self.host, self.port)
             connection.add_init(self.user_agent, self.auth_token)
             connection.dispatch()
@@ -742,12 +741,11 @@ class ConnectionPool(object):
             connection.add_reset()
             connection.dispatch()
             connection.fetch()
-            self.connections.append(connection)
+            self.connections.add(connection)
 
     def close(self):
-        connections = self.connections
-        while connections:
-            connections.popleft().close()
+        while self.connections:
+            self.connections.pop().close()
 
 
 class Driver(object):
