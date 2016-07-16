@@ -598,9 +598,13 @@ MESSAGES = {
 }
 
 
-def print_message(signature, *fields):
+def log(text, *args):
+    print(text % args)
+
+
+def log_message(peer, signature, *fields):
     message_name = next(key for key, value in MESSAGES.items() if value == signature)
-    print("S: %s %s" % (message_name, " ".join(map(repr, fields))))
+    log("%s: %s %s", peer, message_name, " ".join(map(repr, fields)))
 
 
 class Connection(object):
@@ -638,7 +642,7 @@ class Connection(object):
 
         while self.outbox:
             message = self.outbox.pop(0)
-            print_message(*message)
+            log_message("C", *message)
             packed = pack(message)
             for offset in range(0, len(packed), MAX_CHUNK_SIZE):
                 end = offset + MAX_CHUNK_SIZE
@@ -663,7 +667,7 @@ class Connection(object):
                 data.append(self.socket.recv(chunk_size))
 
         message = unpack(b"".join(data))
-        print_message(*message)
+        log_message("S", *message)
         self.inbox.append(message)
         return message[0] == MESSAGES["RECORD"]
 
@@ -672,7 +676,8 @@ class Connection(object):
             pass
 
     def close(self):
-        disconnect(self.socket)
+        log("~~ [DISCONNECT]")
+        self.socket.close()
 
 
 def connect(host, port):
@@ -681,34 +686,28 @@ def connect(host, port):
     """
 
     # Establish a connection to the host and port specified
-    address = (host, port)
-    print("~~ [CONNECT] %s:%d" % address)
-    socket = create_connection(address)
+    log("~~ [CONNECT] %s:%d", host, port)
+    socket = create_connection((host, port))
 
-    print("C: [MAGIC] %s" % h(MAGIC))
+    log("C: [MAGIC] %s", h(MAGIC))
     socket.sendall(MAGIC)
 
     # Send details of the protocol versions supported
     supported_versions = [1, 0, 0, 0]
     data = b"".join(raw_pack(UINT_32, version) for version in supported_versions)
-    print("C: [HANDSHAKE] %s" % h(data))
+    log("C: [HANDSHAKE] %s", h(data))
     socket.sendall(data)
 
     # Handle the handshake response
     data = socket.recv(4)
-    print("S: [HANDSHAKE] %s" % h(data))
+    log("S: [HANDSHAKE] %s", h(data))
     agreed_version, = raw_unpack(UINT_32, data)
     if agreed_version == 1:
         return Connection(socket)
     else:
-        disconnect(socket)
-        raise RuntimeError("Unable to negotiate protocol version")
-
-
-def disconnect(socket):
-    print("~~ [DISCONNECT]")
-    socket.shutdown(SHUT_RDWR)
-    socket.close()
+        log("~~ [DISCONNECT] Could not negotiate protocol version")
+        socket.close()
+        raise RuntimeError("Could not negotiate protocol version")
 
 
 # CHAPTER 3: SESSIONS
@@ -739,10 +738,11 @@ class ConnectionPool(object):
     def release(self, connection):
         """ Release connection back into pool.
         """
-        connection.add_reset()
-        connection.dispatch()
-        connection.fetch()
-        self.connections.append(connection)
+        if connection not in self.connections:
+            connection.add_reset()
+            connection.dispatch()
+            connection.fetch()
+            self.connections.append(connection)
 
     def close(self):
         connections = self.connections
@@ -785,9 +785,8 @@ class Session(object):
 
     def close(self):
         if self.connection:
-            connection = self.connection
+            self.connection_pool.release(self.connection)
             self.connection = None
-            self.connection_pool.release(connection)
 
 
 def main():
