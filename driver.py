@@ -604,9 +604,9 @@ def log(text, *args):
     print(text % args)
 
 
-def log_message(peer, signature, *fields):
-    message_name = next(key for key, value in BOLT.items() if value == signature)
-    log("%s: %s %s", peer, message_name, " ".join(map(repr, fields)))
+def message_repr(tag, *data):
+    message_name = next(key for key, value in BOLT.items() if value == tag)
+    return "%s %s" % (message_name, " ".join(map(repr, data)))
 
 
 class ProtocolError(Exception):
@@ -628,9 +628,12 @@ class Request(object):
     metadata = None
     complete = False
 
-    def __init__(self, *request_message):
-        self.request_message = request_message
-        self.packed = pack(request_message)
+    def __init__(self, *message):
+        self.packed = pack(message)
+        self.repr = message_repr(*message)
+
+    def __repr__(self):
+        return self.repr
 
     def on_record(self, data):
         raise ProtocolError("Response should not contain records")
@@ -672,8 +675,8 @@ class QueryRequest(Request):
 class QueryStreamRequest(QueryRequest):
     # Can return records (PULL_ALL)
 
-    def __init__(self, records, *request_message):
-        super(QueryStreamRequest, self).__init__(*request_message)
+    def __init__(self, records, *message):
+        super(QueryStreamRequest, self).__init__(*message)
         self.records = records
 
     def on_record(self, data):
@@ -717,7 +720,7 @@ class Connection(object):
 
         while self.outgoing:
             request = self.outgoing.popleft()
-            log_message("C", *request.request_message)
+            log("C: %r" % request)
             for offset in range(0, len(request.packed), MAX_CHUNK_SIZE):
                 end = offset + MAX_CHUNK_SIZE
                 chunk = request.packed[offset:end]
@@ -741,7 +744,7 @@ class Connection(object):
             if chunk_size > 0:
                 data.append(self.socket.recv(chunk_size))
         message = unpack(b"".join(data))
-        log_message("S", *message)
+        log("S: %s" % message_repr(*message))
 
         # Handle message
         request = self.incoming[0]
