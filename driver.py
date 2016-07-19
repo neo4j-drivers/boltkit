@@ -85,8 +85,8 @@ else:
 # interesting stuff...
 
 
-# CHAPTER 1: PACKSTREAM
-# =====================
+# CHAPTER 1: PACKSTREAM SERIALISATION
+# ===================================
 
 # First stop: PackStream. Python provides a module called `struct` for coercing data to and from
 # binary representations of that data. The format codes below are the ones that PackStream cares
@@ -576,8 +576,8 @@ def unpack(data, offset=0):
     return next(Packed(data, offset).unpack())
 
 
-# CHAPTER 2: MESSAGING
-# ====================
+# CHAPTER 2: BOLT MESSAGING
+# =========================
 
 # TODO (protocol logging occurs here)
 
@@ -585,7 +585,7 @@ DEFAULT_PORT = 7687
 MAGIC = b"\x60\x60\xB0\x17"
 MAX_CHUNK_SIZE = 65535
 
-# Dictionary of message names mapped to signature bytes
+# Dictionary of Bolt message names mapped to signature bytes
 BOLT = {
     "INIT": 0x01,               # 0000 0001 // INIT <user_agent> <auth_token>
     "ACK_FAILURE": 0x0E,        # 0000 1110 // ACK_FAILURE
@@ -625,17 +625,18 @@ class Failure(Exception):
 class Request(object):
     # Basic request that expects SUCCESS or FAILURE back: INIT, ACK_FAILURE or RESET
 
+    metadata = None
+    complete = False
+
     def __init__(self, *request_message):
         self.request_message = request_message
         self.packed = pack(request_message)
-        self.summary = None
-        self.complete = False
 
     def on_record(self, data):
         raise ProtocolError("Response should not contain records")
 
     def on_success(self, data):
-        self.summary = data
+        self.metadata = data
         self.complete = True
 
     def on_failure(self, data):
@@ -659,19 +660,24 @@ class Request(object):
 
 
 class QueryRequest(Request):
-    # Can collect records, can be ignored
+    # Can be ignored (RUN, DISCARD_ALL)
 
-    def __init__(self, *request_message):
-        super(QueryRequest, self).__init__(*request_message)
-        self.records = deque()
-        self.ignored = False
-
-    def on_record(self, data):
-        self.records.append(data or [])
+    ignored = False
 
     def on_ignored(self, data):
         self.ignored = data
         self.complete = True
+
+
+class QueryStreamRequest(QueryRequest):
+    # Can return records (PULL_ALL)
+
+    def __init__(self, records, *request_message):
+        super(QueryStreamRequest, self).__init__(*request_message)
+        self.records = records
+
+    def on_record(self, data):
+        self.records.append(data or [])
 
 
 class Connection(object):
@@ -685,23 +691,24 @@ class Connection(object):
         self.incoming = deque()
 
     def init(self, user_agent, auth_token):
-        # returns control exchange
         init = Request(BOLT["INIT"], user_agent, auth_token)
         self.outgoing.append(init)
         return self.sync(init)
 
     def reset(self):
-        # returns control exchange
         reset = Request(BOLT["RESET"])
         self.outgoing.append(reset)
         return self.sync(reset)
 
-    def add_statement(self, statement, parameters, discard=False):
-        # returns pair of query exchanges
+    def add_statement(self, statement, parameters, records=None):
+        # returns pair of requests
         run = QueryRequest(BOLT["RUN"], statement, parameters)
-        discard_or_pull = QueryRequest(BOLT["DISCARD_ALL" if discard else "PULL_ALL"])
-        self.outgoing.extend([run, discard_or_pull])
-        return run, discard_or_pull
+        if records is None:
+            stream = QueryRequest(BOLT["DISCARD_ALL"])
+        else:
+            stream = QueryStreamRequest(records, BOLT["PULL_ALL"])
+        self.outgoing.extend([run, stream])
+        return run, stream
 
     def dispatch(self):
         """ Send all pending requests to the server.
@@ -875,12 +882,18 @@ class Session(object):
 
 class StatementResult(object):
 
-    def __init__(self, connection, statement, parameters, discard=False):
+    def __init__(self, connection, statement, parameters):
         self.connection = connection
-        self.run, self.discard_or_pull = connection.add_statement(statement, parameters, discard)
+        self.records = deque()
+        self.run, self.stream = connection.add_statement(statement, parameters, self.records)
+
+    def keys(self):
+        self.connection.sync(self.run)
+        return self.run.metadata.get("fields", [])
 
     def consume(self):
-        self.connection.sync(self.discard_or_pull)
+        self.connection.sync(self.stream)
+        return self.stream.metadata
 
 
 def main():
@@ -895,7 +908,10 @@ def main():
     #del session
     #import gc; gc.collect()
     #session = driver.session()
-    session.run("UNWIND range(1, 10) AS n RETURN n").consume()
+    result2 = session.run("UNWIND range(1, 10) AS n RETURN n")
+    print(result2.keys())
+    result2.consume()
+    print(result2.records)
     del session
     driver.close()
 
