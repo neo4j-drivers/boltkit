@@ -586,13 +586,13 @@ MAGIC = b"\x60\x60\xB0\x17"
 MAX_CHUNK_SIZE = 65535
 
 # Dictionary of message names mapped to signature bytes
-MESSAGES = {
+BOLT = {
     "INIT": 0x01,               # 0000 0001 // INIT <user_agent> <auth_token>
     "ACK_FAILURE": 0x0E,        # 0000 1110 // ACK_FAILURE
     "RESET": 0x0F,              # 0000 1111 // RESET
     "RUN": 0x10,                # 0001 0000 // RUN <statement> <parameters>
-    "DISCARD_ALL": 0x2F,        # 0010 1111 // DISCARD *
-    "PULL_ALL": 0x3F,           # 0011 1111 // PULL *
+    "DISCARD_ALL": 0x2F,        # 0010 1111 // DISCARD_ALL
+    "PULL_ALL": 0x3F,           # 0011 1111 // PULL_ALL
     "SUCCESS": 0x70,            # 0111 0000 // SUCCESS <metadata>
     "RECORD": 0x71,             # 0111 0001 // RECORD <value>
     "IGNORED": 0x7E,            # 0111 1110 // IGNORED <metadata>
@@ -605,15 +605,73 @@ def log(text, *args):
 
 
 def log_message(peer, signature, *fields):
-    message_name = next(key for key, value in MESSAGES.items() if value == signature)
+    message_name = next(key for key, value in BOLT.items() if value == signature)
     log("%s: %s %s", peer, message_name, " ".join(map(repr, fields)))
+
+
+class ProtocolError(Exception):
+
+    pass
 
 
 class Failure(Exception):
 
-    def __init__(self, metadata):
+    def __init__(self, request, **metadata):
         super(Failure, self).__init__(metadata["message"])
         self.code = metadata["code"]
+        self.request = request
+
+
+class Request(object):
+    # Basic request that expects SUCCESS or FAILURE back: INIT, ACK_FAILURE or RESET
+
+    def __init__(self, *request_message):
+        self.request_message = request_message
+        self.packed = pack(request_message)
+        self.summary = None
+        self.complete = False
+
+    def on_record(self, data):
+        raise ProtocolError("Response should not contain records")
+
+    def on_success(self, data):
+        self.summary = data
+        self.complete = True
+
+    def on_failure(self, data):
+        self.complete = True
+        raise Failure(self, **data)
+
+    def on_ignored(self, data):
+        raise ProtocolError("Request should not be ignored")
+
+    def on_message(self, tag, data=None):
+        if tag == BOLT["RECORD"]:
+            self.on_record(data)
+        elif tag == BOLT["SUCCESS"]:
+            self.on_success(data)
+        elif tag == BOLT["FAILURE"]:
+            self.on_failure(data)
+        elif tag == BOLT["IGNORED"]:
+            self.on_ignored(data)
+        else:
+            raise ProtocolError("Unexpected response message")
+
+
+class QueryRequest(Request):
+    # Can collect records, can be ignored
+
+    def __init__(self, *request_message):
+        super(QueryRequest, self).__init__(*request_message)
+        self.records = deque()
+        self.ignored = False
+
+    def on_record(self, data):
+        self.records.append(data or [])
+
+    def on_ignored(self, data):
+        self.ignored = data
+        self.complete = True
 
 
 class Connection(object):
@@ -623,40 +681,43 @@ class Connection(object):
 
     def __init__(self, socket):
         self.socket = socket
-        self.requests = deque()
-        self.responses = deque()
-
-    def add(self, *request):
-        response = deque()
-        self.requests.append(request)
-        self.responses.append(response)
-        return response
+        self.outgoing = deque()
+        self.incoming = deque()
 
     def init(self, user_agent, auth_token):
-        return self.sync(self.add(MESSAGES["INIT"], user_agent, auth_token))
+        # returns control exchange
+        init = Request(BOLT["INIT"], user_agent, auth_token)
+        self.outgoing.append(init)
+        return self.sync(init)
 
     def reset(self):
-        return self.sync(self.add(MESSAGES["RESET"]))
+        # returns control exchange
+        reset = Request(BOLT["RESET"])
+        self.outgoing.append(reset)
+        return self.sync(reset)
 
     def add_statement(self, statement, parameters, discard=False):
-        return (self.add(MESSAGES["RUN"], statement, parameters),
-                self.add(MESSAGES["DISCARD_ALL" if discard else "PULL_ALL"]))
+        # returns pair of query exchanges
+        run = QueryRequest(BOLT["RUN"], statement, parameters)
+        discard_or_pull = QueryRequest(BOLT["DISCARD_ALL" if discard else "PULL_ALL"])
+        self.outgoing.extend([run, discard_or_pull])
+        return run, discard_or_pull
 
     def dispatch(self):
         """ Send all pending requests to the server.
         """
         data = []
 
-        while self.requests:
-            message = self.requests.popleft()
-            log_message("C", *message)
-            packed = pack(message)
-            for offset in range(0, len(packed), MAX_CHUNK_SIZE):
+        while self.outgoing:
+            request = self.outgoing.popleft()
+            log_message("C", *request.request_message)
+            for offset in range(0, len(request.packed), MAX_CHUNK_SIZE):
                 end = offset + MAX_CHUNK_SIZE
-                chunk = packed[offset:end]
+                chunk = request.packed[offset:end]
                 data.append(raw_pack(UINT_16, len(chunk)))
                 data.append(chunk)
             data.append(raw_pack(UINT_16, 0))
+            self.incoming.append(request)
 
         if data:
             self.socket.sendall(b"".join(data))
@@ -665,38 +726,37 @@ class Connection(object):
         """ Receive exactly one message from an open socket
         """
 
-        data = []
-
         # Receive chunks of data until chunk_size == 0
+        data = []
         chunk_size = -1
         while chunk_size != 0:
             chunk_size, = raw_unpack(UINT_16, self.socket.recv(2))
             if chunk_size > 0:
                 data.append(self.socket.recv(chunk_size))
-
         message = unpack(b"".join(data))
         log_message("S", *message)
 
-        signature = message[0]
-        more = signature == MESSAGES["RECORD"]
-        if more:
-            response = self.responses[0]
-        else:
-            response = self.responses.popleft()
-        response.append(message)
-        if signature == MESSAGES["FAILURE"]:
-            self.add(MESSAGES["ACK_FAILURE"])
-            # TODO handle failure on ack_failure (close connection)
-            raise Failure(message[1])
-        else:
-            return more
+        # Handle message
+        request = self.incoming[0]
+        try:
+            request.on_message(*message)
+        except Failure as failure:
+            if isinstance(failure.request, QueryRequest):
+                self.outgoing.append(Request(BOLT["ACK_FAILURE"]))
+            else:
+                self.close()
+            raise
+        finally:
+            if request.complete:
+                self.incoming.popleft()
+        return not request.complete
 
-    def sync(self, response):
+    def sync(self, request):
         self.dispatch()
-        while response in self.responses:
+        while request in self.incoming:
             while self.fetch():
                 pass
-        return response
+        return request
 
     def close(self):
         log("~~ [DISCONNECT]")
@@ -735,11 +795,6 @@ def connect(address):
 
 # CHAPTER 3: SESSIONS
 # ===================
-
-
-class ProtocolError(Exception):
-
-    pass
 
 
 class ConnectionPool(object):
@@ -809,8 +864,8 @@ class Session(object):
     def __del__(self):
         self.close()
 
-    def run(self, statement, parameters):
-        return StatementResult(self.connection, statement, parameters)
+    def run(self, statement, parameters=None):
+        return StatementResult(self.connection, statement, parameters or {})
 
     def close(self):
         if self.connection:
@@ -820,24 +875,27 @@ class Session(object):
 
 class StatementResult(object):
 
-    def __init__(self, connection, statement, parameters):
+    def __init__(self, connection, statement, parameters, discard=False):
         self.connection = connection
-        self.responses = connection.add_statement(statement, parameters)
+        self.run, self.discard_or_pull = connection.add_statement(statement, parameters, discard)
 
     def consume(self):
-        self.connection.sync(self.responses[-1])
+        self.connection.sync(self.discard_or_pull)
 
 
 def main():
-    driver = Driver("bolt://localhost:7687", "ExampleDriver/1.1",
+    driver = Driver("bolt://localhost:7687", "DemoDriver/1.1",
                     {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
     session = driver.session()
-    result = session.run("UNWIND range(101, 100 + {size}) AS n RETURN n", {"size": 10})
-    #result.consume()
+    try:
+        result = session.run("XUNWIND range(101, 100 + {size}) AS n RETURN n", {"size": 10})
+        result.consume()
+    except Failure:
+        pass
     #del session
     #import gc; gc.collect()
     #session = driver.session()
-    session.run("UNWIND range(201, 200 + {size}) AS n RETURN n", {"size": 10}).consume()
+    session.run("UNWIND range(1, 10) AS n RETURN n").consume()
     del session
     driver.close()
 
