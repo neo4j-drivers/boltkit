@@ -700,18 +700,26 @@ def parse_message(message):
 
 
 def main():
-    if len(argv) < 3:
-        print("usage: %s <port> <script>" % argv[0])
+    if len(argv) < 1:
+        print("usage: %s <ports> <script> [<script> ...]" % argv[0])
         exit()
-    spec = ServerSpec(int(argv[1]))
-    with open(argv[2]) as script:
-        request = None
-        for line in script:
-            if line.startswith("C:"):
-                request = parse_message(line[2:].strip())
-            elif line.startswith("S:"):
-                spec.add_exchange(request, line[2:].strip())
-    cluster = BoltCluster([spec])
+    specs = []
+    for i, port_string in enumerate(argv[1].split(":"), start=2):
+        spec = ServerSpec(int(port_string))
+        try:
+            script_file = argv[i]
+        except IndexError:
+            pass
+        else:
+            with open(script_file) as script:
+                request = None
+                for line in script:
+                    if line.startswith("C:"):
+                        request = parse_message(line[2:].strip())
+                    elif line.startswith("S:"):
+                        spec.add_exchange(request, line[2:].strip())
+        specs.append(spec)
+    cluster = BoltCluster(specs)
     cluster.start()
     try:
         while cluster.is_alive():
