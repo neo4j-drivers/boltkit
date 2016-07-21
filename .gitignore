@@ -2,4 +2,6 @@
 *.py[co]
 __pycache__
 .idea
+
 *.egg-info
+dist

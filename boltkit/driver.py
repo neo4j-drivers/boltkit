@@ -901,10 +901,10 @@ class StatementResult(object):
 
 
 def main():
-    driver = Driver("bolt://localhost:7687", "DemoDriver/1.1",
-                    {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
+    driver = Driver(u"bolt://localhost:7687", u"DemoDriver/1.1",
+                    {u"scheme": u"basic", u"principal": u"neo4j", u"credentials": u"password"})
     session = driver.session()
-    session.run("UNWIND range(1, 10) AS n RETURN n").consume()
+    session.run(u"UNWIND range(1, 10) AS n RETURN n").consume()
     driver.close()
 
 
