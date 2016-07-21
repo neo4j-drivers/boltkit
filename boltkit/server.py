@@ -23,7 +23,11 @@ Stub server
 """
 
 from collections import deque
-from json import JSONDecoder, JSONDecodeError
+from json import JSONDecoder
+try:
+    from json import JSONDecodeError
+except ImportError:
+    JSONDecodeError = ValueError
 from os.path import basename
 from select import select
 from socket import socket, SOL_SOCKET, SO_REUSEADDR
@@ -35,14 +39,15 @@ from .driver import h, UINT_16, BOLT, pack, unpack, message_repr
 from .watcher import bright_green, green
 
 
-def write(text, *args, colour=None):
+def write(text, *args, **kwargs):
+    colour = kwargs.get("colour")
     if colour:
         print(colour(text % args))
     else:
         print(text % args)
 
 
-class Server:
+class Server(object):
 
     def __init__(self, address):
         self.address = address
@@ -56,7 +61,7 @@ class StubServer(Thread):
         self.server = socket()
         self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.server.bind(address)
-        self.server.listen()
+        self.server.listen(0)
         self.servers = {self.server: Server(address)}
         self.script = script
         self.running = True
@@ -142,7 +147,7 @@ class StubServer(Thread):
         return h(data)
 
 
-class StubCluster:
+class StubCluster(object):
 
     def __init__(self, specs):
         self.specs = specs
@@ -170,7 +175,7 @@ class StubCluster:
         return True
 
 
-class ServerSpec:
+class ServerSpec(object):
 
     def __init__(self, port, script):
         self.port = port
