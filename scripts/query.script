@@ -1,0 +1,4 @@
+?: CALL foo.bar.myProcedure
+=: name,age
+   Alice,33
+   Bob,44

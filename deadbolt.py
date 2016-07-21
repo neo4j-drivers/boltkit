@@ -517,6 +517,24 @@ def message_repr(tag, *data):
     return "%s %s" % (message_name, " ".join(map(repr, data)))
 
 
+def parse_lines(lines):
+    mode = "C"
+    for line_no, line in enumerate(lines, start=1):
+        line = line.rstrip()
+        if line == "" or line.startswith("//"):
+            pass
+        elif len(line) >= 2 and line[1] == ":":
+            mode = line[0].upper()
+            yield line_no, mode, line[2:].lstrip()
+        elif mode is not None:
+            yield line_no, mode, line.lstrip()
+
+
+def parse_script(lines):
+    for line_no, mode, line in parse_lines(lines):
+        print(line_no, mode, parse_message(line))
+
+
 class Server:
 
     def __init__(self, address):
@@ -685,7 +703,7 @@ class ServerSpec:
 
 def parse_message(message):
     tag, _, data = message.partition(" ")
-    parsed = (BOLT[tag],)
+    parsed = (BOLT.get(tag, -1),)
     decoder = JSONDecoder()
     while data:
         data = data.lstrip()
