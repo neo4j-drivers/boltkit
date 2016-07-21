@@ -59,6 +59,7 @@ Neo4j Bolt driver can be thought of as composed of three layers...
 
 # You'll need to make sure you have the following items handy...
 from collections import deque
+from json import dumps as json_dumps
 from socket import create_connection
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import version_info
@@ -602,7 +603,7 @@ BOLT = {
 
 def message_repr(tag, *data):
     message_name = next(key for key, value in BOLT.items() if value == tag)
-    return "%s %s" % (message_name, " ".join(map(repr, data)))
+    return "%s %s" % (message_name, " ".join(map(json_dumps, data)))
 
 
 def log(text, *args):
@@ -903,19 +904,7 @@ def main():
     driver = Driver("bolt://localhost:7687", "DemoDriver/1.1",
                     {"scheme": "basic", "principal": "neo4j", "credentials": "password"})
     session = driver.session()
-    try:
-        result = session.run("XUNWIND range(101, 100 + {size}) AS n RETURN n", {"size": 10})
-        result.consume()
-    except Failure:
-        pass
-    #del session
-    #import gc; gc.collect()
-    #session = driver.session()
-    result2 = session.run("UNWIND range(1, 10) AS n RETURN n")
-    print(result2.keys())
-    result2.consume()
-    print(result2.records)
-    del session
+    session.run("UNWIND range(1, 10) AS n RETURN n").consume()
     driver.close()
 
 
