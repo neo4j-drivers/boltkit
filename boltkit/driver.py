@@ -895,16 +895,24 @@ class StatementResult(object):
         self.connection.sync(self.run)
         return self.run.metadata.get("fields", [])
 
-    def consume(self):
+    def buffer(self):
         self.connection.sync(self.stream)
+
+    def consume(self):
+        self.buffer()
+        self.records.clear()
+
+    def summary(self):
+        self.buffer()
         return self.stream.metadata
 
 
 def main():
+    from sys import argv
     driver = Driver(u"bolt://localhost:7687", u"DemoDriver/1.1",
                     {u"scheme": u"basic", u"principal": u"neo4j", u"credentials": u"password"})
     session = driver.session()
-    session.run(u"UNWIND range(1, 10) AS n RETURN n").consume()
+    session.run(argv[1]).consume()
     driver.close()
 
 
