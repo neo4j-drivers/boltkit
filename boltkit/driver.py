@@ -136,7 +136,7 @@ def h(data):
     This function is not essential to driver-building but is a great help when debugging,
     logging and writing doctests.
 
-        >>> from driver import h
+        >>> from boltkit.driver import h
         >>> h(b"\x03A~")
         '03:41:7E'
 
@@ -151,7 +151,7 @@ def pack(*values):
     "packing". The signature of the method permits any number of values to be provided as
     positional arguments. Each will be serialised in order into the output byte stream.
 
-        >>> from driver import pack
+        >>> from boltkit.driver import pack
         >>> h(pack(1))
         '01'
         >>> h(pack(1234))

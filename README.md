@@ -1,8 +1,8 @@
-# Neo4j Resources for Driver Authors
+# Boltkit
 
-This repository provides information and resources for Neo4j driver authors.
+Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
 
 ## Contents
 
-- [How To Build a Neo4j Bolt Driver](driver.py)
-- [Stub Bolt Server (experimental, currently undocumented)](deadbolt.py)
+- [How To Build a Neo4j Bolt Driver](boltkit/driver.py)
+- [Stub Bolt Server (experimental, currently undocumented)](boltkit/server.py)
