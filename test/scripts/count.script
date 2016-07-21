@@ -1,0 +1,16 @@
+!: AUTO INIT RESET
+
+C: RUN "UNWIND range(1, 10) AS n RETURN n" {}
+   PULL_ALL
+S: SUCCESS {"fields": []}
+   RECORD [1]
+   RECORD [2]
+   RECORD [3]
+   RECORD [4]
+   RECORD [5]
+   RECORD [6]
+   RECORD [7]
+   RECORD [8]
+   RECORD [9]
+   RECORD [10]
+   SUCCESS {}
