@@ -36,7 +36,10 @@ from sys import argv, exit
 from threading import Thread
 
 from .driver import h, UINT_16, BOLT, pack, unpack, message_repr
-from .watcher import bright_green, green
+from .watcher import red, green, blue
+
+
+TIMEOUT = 10
 
 
 def write(text, *args, **kwargs):
@@ -68,9 +71,13 @@ class StubServer(Thread):
 
     def run(self):
         while self.running:
-            read_list, _, _ = select(list(self.servers), [], [])
-            for sock in read_list:
-                self.read(sock)
+            read_list, _, _ = select(list(self.servers), [], [], TIMEOUT)
+            if read_list:
+                for sock in read_list:
+                    self.read(sock)
+            else:
+                write("C: [TIMEOUT] %ds" % TIMEOUT, colour=red)
+                exit(1)
 
     def read(self, sock):
         if sock == self.server:
@@ -120,17 +127,20 @@ class StubServer(Thread):
         request = unpack(message_data)
 
         if self.script.match_request(request):
-            write("C: %s", message_repr(*request), colour=bright_green)
-        elif request[0] in self.script.auto:
+            # explicitly matched
             write("C: %s", message_repr(*request), colour=green)
+        elif self.script.match_auto_request(request):
+            # auto matched
+            write("C: %s", message_repr(*request), colour=blue)
         else:
-            write("C: %s", message_repr(*request))
+            # not matched
+            write("C: %s", message_repr(*request), colour=red)
 
         responses = self.script.match_responses()
-        colour = bright_green
-        if not responses and request[0] in self.script.auto:
+        colour = green
+        if not responses and self.script.match_auto_request(request):
             responses = [(BOLT["SUCCESS"], {"fields": []} if request[0] == BOLT["RUN"] else {})]
-            colour = green
+            colour = blue
         for response in responses:
             data = pack(response)
             self.send_chunk(sock, data)
@@ -229,7 +239,7 @@ class Line(object):
 class Script(object):
 
     def __init__(self):
-        self.auto = set()
+        self.auto = []
         self.lines = deque()
 
     def __nonzero__(self):
@@ -246,12 +256,19 @@ class Script(object):
         with open(file_name) as f:
             for line_no, mode, line in parse_lines(f):
                 if mode == "!":
-                    terms = line.split()
-                    if terms[0] == "AUTO":
-                        for term in terms[1:]:
-                            self.auto.add(parse_tag(term))
-                if mode in "CS":
+                    command, _, rest = line.partition(" ")
+                    if command == "AUTO":
+                        self.auto.append(parse_message(rest))
+                elif mode in "CS":
                     lines.append(Line(line_no, mode, parse_message(line)))
+
+    def match_auto_request(self, request):
+        for message in self.auto:
+            if len(message) == 1 and request[0] == message[0]:
+                return True
+            elif request == message:
+                return True
+        return False
 
     def match_request(self, request):
         if not self.lines:
