@@ -646,12 +646,7 @@ PACKED_PULL_ALL = packed((CLIENT["PULL_ALL"],))
 log = getLogger("boltkit.connection")
 
 
-def prepare_init(user_agent, user, password):
-    auth_token = {"scheme": "basic", "principal": user, "credentials": password}
-    return packed((CLIENT["INIT"], user_agent, auth_token))
-
-
-def connect(address, packed_init):
+def connect(address, user_agent, user, password):
     """ Connect and perform a handshake in order to return a valid
     Connection object, assuming a protocol version can be agreed.
     """
@@ -673,7 +668,7 @@ def connect(address, packed_init):
     log.info("S: <VERSION> %d", version)
 
     if version == BOLT_VERSION:
-        return Connection(socket, packed_init)
+        return Connection(socket, user_agent, user, password)
     else:
         log.info("~~ <CLOSE> Could not negotiate protocol version")
         socket.close()
@@ -681,62 +676,64 @@ def connect(address, packed_init):
 
 
 class Connection(object):
-    """ Server connection through which all protocol messages
-    are sent and received.
+    """ The Connection wraps the socket through which all protocol messages are sent and received.
     """
 
-    def __init__(self, socket, packed_init):
+    def __init__(self, socket, user_agent, user, password):
         self.socket = socket
-        self.log_queue = deque(["INIT ..."])
-        self.request_queue = deque([packed_init])
+        self.logs = deque(["INIT ..."])
+        auth_token = {"scheme": "basic", "principal": user, "credentials": password}
+        self.requests = deque([packed((CLIENT["INIT"], user_agent, auth_token))])
+        self.flush()
         response = Response()
-        self.response_queue = deque([response])
-        self.sync(response)
+        self.responses = deque([response])
+        while not response.complete():
+            self.fetch()
 
     def reset(self):
-        self.log_queue.append("RESET")
-        self.request_queue.append(PACKED_RESET)
+        self.logs.append("RESET")
+        self.requests.append(PACKED_RESET)
+        self.flush()
         response = Response()
-        self.response_queue.append(response)
-        self.sync(response)
+        self.responses.append(response)
+        while not response.complete():
+            self.fetch()
 
     def add_statement(self, statement, parameters, records=None):
         # returns pair of requests
-        self.log_queue.append("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)))
-        self.request_queue.append(packed((CLIENT["RUN"], statement, parameters)))
-        run_response = QueryResponse()
+        self.logs.append("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)))
+        self.requests.append(packed((CLIENT["RUN"], statement, parameters)))
+        head = QueryResponse()
         if records is None:
-            self.log_queue.append("DISCARD_ALL")
-            self.request_queue.append(PACKED_DISCARD_ALL)
-            consume_response = QueryResponse()
+            self.logs.append("DISCARD_ALL")
+            self.requests.append(PACKED_DISCARD_ALL)
+            tail = QueryResponse()
         else:
-            self.log_queue.append("PULL_ALL")
-            self.request_queue.append(PACKED_PULL_ALL)
-            consume_response = QueryStreamResponse(records)
-        self.response_queue.extend([run_response, consume_response])
-        return run_response, consume_response
+            self.logs.append("PULL_ALL")
+            self.requests.append(PACKED_PULL_ALL)
+            tail = QueryStreamResponse(records)
+        self.responses.extend([head, tail])
+        return head, tail
 
-    def dispatch(self):
-        """ Send all pending requests to the server.
+    def flush(self):
+        """ Send all pending request messsages to the server.
         """
+        if not self.requests:
+            return
         data = []
-        append = data.append
-
-        while self.request_queue:
-            request = self.request_queue.popleft()
-            log.info("C: %s", self.log_queue.popleft())
+        while self.requests:
+            request = self.requests.popleft()
+            log.info("C: %s", self.logs.popleft())
             for offset in range(0, len(request), MAX_CHUNK_SIZE):
                 end = offset + MAX_CHUNK_SIZE
                 chunk = request[offset:end]
-                append(raw_pack(UINT_16, len(chunk)))
-                append(chunk)
-            append(raw_pack(UINT_16, 0))
-
-        if data:
-            self.socket.sendall(b"".join(data))
+                data.append(raw_pack(UINT_16, len(chunk)))
+                data.append(chunk)
+            data.append(raw_pack(UINT_16, 0))
+        self.socket.sendall(b"".join(data))
 
     def fetch(self):
-        """ Receive exactly one message from an open socket
+        """ Receive exactly one response message from the server
         """
 
         # Receive chunks of data until chunk_size == 0
@@ -749,28 +746,20 @@ class Connection(object):
         message = unpacked(b"".join(data))
 
         # Handle message
-        response = self.response_queue[0]
+        response = self.responses[0]
         try:
             response.on_message(*message)
         except Failure as failure:
             if isinstance(failure.request, QueryResponse):
-                self.log_queue.append("ACK_FAILURE")
-                self.request_queue.append(PACKED_ACK_FAILURE)
-                self.response_queue.append(Response())
+                self.logs.append("ACK_FAILURE")
+                self.requests.append(PACKED_ACK_FAILURE)
+                self.responses.append(Response())
             else:
                 self.close()
             raise
         finally:
-            if response.complete:
-                self.response_queue.popleft()
-        return not response.complete
-
-    def sync(self, request):
-        self.dispatch()
-        while request in self.response_queue:
-            while self.fetch():
-                pass
-        return request
+            if response.complete():
+                self.responses.popleft()
 
     def close(self):
         log.info("~~ <CLOSE>")
@@ -789,16 +778,17 @@ class Response(object):
     # Basic request that expects SUCCESS or FAILURE back: INIT, ACK_FAILURE or RESET
 
     metadata = None
-    complete = False
+
+    def complete(self):
+        return self.metadata is not None
 
     def on_success(self, data):
         log.info("S: SUCCESS %s", json_dumps(data))
         self.metadata = data
-        self.complete = True
 
     def on_failure(self, data):
         log.info("S: FAILURE %s", json_dumps(data))
-        self.complete = True
+        self.metadata = data
         raise Failure(self, **data)
 
     def on_message(self, tag, data=None):
@@ -817,8 +807,8 @@ class QueryResponse(Response):
 
     def on_ignored(self, data):
         log.info("S: IGNORED %s", json_dumps(data))
-        self.ignored = data
-        self.complete = True
+        self.ignored = True
+        self.metadata = data
 
     def on_message(self, tag, data=None):
         if tag == SERVER["IGNORED"]:
@@ -835,7 +825,7 @@ class QueryStreamResponse(QueryResponse):
 
     def on_record(self, data):
         log.info("S: RECORD %s", json_dumps(data))
-        if self.records:
+        if self.records is not None:
             self.records.append(data or [])
 
     def on_message(self, tag, data=None):
@@ -860,7 +850,9 @@ class ConnectionPool(object):
 
     def __init__(self, address, user_agent, user, password):
         self.address = address
-        self.packed_init = prepare_init(user_agent, user, password)
+        self.user_agent = user_agent
+        self.user = user
+        self.password = password
         self.connections = set()
 
     def __del__(self):
@@ -872,7 +864,7 @@ class ConnectionPool(object):
         try:
             connection = self.connections.pop()
         except KeyError:
-            connection = connect(self.address, self.packed_init)
+            connection = connect(self.address, self.user_agent, self.user, self.password)
         return connection
 
     def release(self, connection):
@@ -950,14 +942,30 @@ class StatementResult(object):
         # shares a connection, never closes or explicitly releases it
         self.connection = connection
         self.records = deque()
-        self.run, self.stream = connection.add_statement(statement, parameters, self.records)
+        self.head, self.tail = connection.add_statement(statement, parameters, self.records)
 
     def keys(self):
-        self.connection.sync(self.run)
-        return self.run.metadata.get("fields", [])
+        self.connection.flush()
+        while not self.head.complete():
+            self.connection.fetch()
+        return self.head.metadata.get("fields", [])
+
+    def next(self):
+        try:
+            return self.records.popleft()
+        except IndexError:
+            if self.tail.complete():
+                return None
+            else:
+                self.connection.flush()
+                while not self.records and not self.tail.complete():
+                    self.connection.fetch()
+                return self.next()
 
     def buffer(self):
-        self.connection.sync(self.stream)
+        self.connection.flush()
+        while not self.tail.complete():
+            self.connection.fetch()
 
     def consume(self):
         self.buffer()
@@ -965,4 +973,4 @@ class StatementResult(object):
 
     def summary(self):
         self.buffer()
-        return self.stream.metadata
+        return self.tail.metadata
