@@ -23,7 +23,8 @@ Stub server
 """
 
 from collections import deque
-from json import JSONDecoder
+from itertools import chain
+from json import dumps as json_dumps, JSONDecoder
 try:
     from json import JSONDecodeError
 except ImportError:
@@ -35,11 +36,16 @@ from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import argv, exit
 from threading import Thread
 
-from .driver import h, UINT_16, BOLT, pack, unpack, message_repr
+from .driver import h, UINT_16, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSION
 from .watcher import red, green, blue
 
 
-TIMEOUT = 10
+TIMEOUT = 30
+
+
+def message_repr(tag, *data):
+    name = next(key for key, value in chain(CLIENT.items(), SERVER.items()) if value == tag)
+    return "%s %s" % (name, " ".join(map(json_dumps, data)))
 
 
 def write(text, *args, **kwargs):
@@ -50,7 +56,7 @@ def write(text, *args, **kwargs):
         print(text % args)
 
 
-class Server(object):
+class Peer(object):
 
     def __init__(self, address):
         self.address = address
@@ -65,42 +71,56 @@ class StubServer(Thread):
         self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.server.bind(address)
         self.server.listen(0)
-        self.servers = {self.server: Server(address)}
+        self.peers = {self.server: Peer(address)}
         self.script = script
         self.running = True
 
     def run(self):
         while self.running:
-            read_list, _, _ = select(list(self.servers), [], [], TIMEOUT)
+            read_list, _, _ = select(list(self.peers), [], [], TIMEOUT)
             if read_list:
                 for sock in read_list:
                     self.read(sock)
             else:
-                write("C: [TIMEOUT] %ds" % TIMEOUT, colour=red)
+                write("C: <TIMEOUT> %ds" % TIMEOUT, colour=red)
                 exit(1)
 
     def read(self, sock):
         if sock == self.server:
             self.accept(sock)
-        elif self.servers[sock].version:
+        elif self.peers[sock].version:
             self.handle_request(sock)
         else:
             self.handshake(sock)
 
+    def close(self, sock):
+        write("~~ <CLOSE> \"%s\" %d", *self.peers[sock].address)
+        del self.peers[sock]
+        sock.close()
+        self.running = False
+
     def accept(self, sock):
         new_sock, address = sock.accept()
-        self.servers[new_sock] = Server(address)
-        write("~~ [ACCEPT] %s -> %s", self.servers[sock].address, self.servers[new_sock].address)
+        self.peers[new_sock] = Peer(address)
+        listen_address = self.peers[sock].address
+        serve_address = self.peers[new_sock].address
+        write("~~ <ACCEPT> \"%s\" %d -> %d", listen_address[0], listen_address[1], serve_address[1])
 
     def handshake(self, sock):
-        chunked_data = sock.recv(4)
-        write("C: [MAGIC] %s" % h(chunked_data))
-        chunked_data = sock.recv(16)
-        write("C: [HANDSHAKE] %s" % h(chunked_data))
-        response = chunked_data[0:4]
-        write("S: [HANDSHAKE] %s" % h(response))
+        data = sock.recv(4)
+        if data == BOLT:
+            write("C: <BOLT>")
+        else:
+            write("C: <#?@!>")
+            self.close(sock)
+            return
+        raw_data = sock.recv(16)
+        # TODO: proper version negotiation
+        write("C: <VERSION> %s" % h(raw_data))
+        response = raw_data[0:4]
+        write("S: <VERSION> %d" % BOLT_VERSION)
         sock.send(response)
-        self.servers[sock].version = 1
+        self.peers[sock].version = 1
 
     def handle_request(self, sock):
         chunked_data = b""
@@ -110,10 +130,7 @@ class StubServer(Thread):
         while chunk_size != 0:
             chunk_header = sock.recv(2)
             if len(chunk_header) == 0:
-                write("~~ [CLOSE] %s", self.servers[sock].address)
-                del self.servers[sock]
-                sock.close()
-                self.running = False
+                self.close(sock)
                 return
             chunked_data += chunk_header
             chunk_size, = raw_unpack(UINT_16, chunk_header)
@@ -124,7 +141,7 @@ class StubServer(Thread):
             else:
                 chunk = b""
             debug.append("     [%s] %s" % (h(chunk_header), h(chunk)))
-        request = unpack(message_data)
+        request = unpacked(message_data)
 
         if self.script.match_request(request):
             # explicitly matched
@@ -139,10 +156,10 @@ class StubServer(Thread):
         responses = self.script.match_responses()
         colour = green
         if not responses and self.script.match_auto_request(request):
-            responses = [(BOLT["SUCCESS"], {"fields": []} if request[0] == BOLT["RUN"] else {})]
+            responses = [(SERVER["SUCCESS"], {"fields": []} if request[0] == CLIENT["RUN"] else {})]
             colour = blue
         for response in responses:
-            data = pack(response)
+            data = packed(response)
             self.send_chunk(sock, data)
             self.send_chunk(sock)
             write("S: %s", message_repr(*response), colour=colour)
@@ -192,39 +209,6 @@ class ServerSpec(object):
         self.script = script
 
 
-def parse_tag(tag):
-    return BOLT.get(tag, -1)
-
-
-def parse_message(message):
-    tag, _, data = message.partition(" ")
-    parsed = (parse_tag(tag),)
-    decoder = JSONDecoder()
-    while data:
-        data = data.lstrip()
-        try:
-            decoded, end = decoder.raw_decode(data)
-        except JSONDecodeError:
-            break
-        else:
-            parsed += (decoded,)
-            data = data[end:]
-    return parsed
-
-
-def parse_lines(lines):
-    mode = "C"
-    for line_no, line in enumerate(lines, start=1):
-        line = line.rstrip()
-        if line == "" or line.startswith("//"):
-            pass
-        elif len(line) >= 2 and line[1] == ":":
-            mode = line[0].upper()
-            yield line_no, mode, line[2:].lstrip()
-        elif mode is not None:
-            yield line_no, mode, line.lstrip()
-
-
 class Line(object):
 
     def __init__(self, line_no, peer, message):
@@ -251,16 +235,48 @@ class Script(object):
     def __len__(self):
         return len(self.lines)
 
+    def parse_message(self, message):
+        tag, _, data = message.partition(" ")
+        if tag in CLIENT:
+            parsed = (CLIENT[tag],)
+        elif tag in SERVER:
+            parsed = (SERVER[tag],)
+        else:
+            raise ValueError("Unknown message type %s" % tag)
+        decoder = JSONDecoder()
+        while data:
+            data = data.lstrip()
+            try:
+                decoded, end = decoder.raw_decode(data)
+            except JSONDecodeError:
+                break
+            else:
+                parsed += (decoded,)
+                data = data[end:]
+        return parsed
+
+    def parse_lines(self, lines):
+        mode = "C"
+        for line_no, line in enumerate(lines, start=1):
+            line = line.rstrip()
+            if line == "" or line.startswith("//"):
+                pass
+            elif len(line) >= 2 and line[1] == ":":
+                mode = line[0].upper()
+                yield line_no, mode, line[2:].lstrip()
+            elif mode is not None:
+                yield line_no, mode, line.lstrip()
+
     def append(self, file_name):
         lines = self.lines
         with open(file_name) as f:
-            for line_no, mode, line in parse_lines(f):
+            for line_no, mode, line in self.parse_lines(f):
                 if mode == "!":
                     command, _, rest = line.partition(" ")
                     if command == "AUTO":
-                        self.auto.append(parse_message(rest))
+                        self.auto.append(self.parse_message(rest))
                 elif mode in "CS":
-                    lines.append(Line(line_no, mode, parse_message(line)))
+                    lines.append(Line(line_no, mode, self.parse_message(line)))
 
     def match_auto_request(self, request):
         for message in self.auto:
@@ -293,7 +309,7 @@ def match(expected, actual):
     return expected == actual
 
 
-def main():
+def stub():
     if len(argv) < 2:
         print("usage: %s <ports> <script> [<script> ...]" % basename(argv[0]))
         exit()
@@ -319,4 +335,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    stub()

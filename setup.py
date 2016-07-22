@@ -33,7 +33,8 @@ package_metadata = {
     "author_email": "drivers@neo4j.com",
     "entry_points": {
         "console_scripts": [
-            "boltstub = boltkit.server:main",
+            "boltrun = boltkit.runner:run",
+            "boltstub = boltkit.server:stub",
         ],
     },
     "packages": packages,

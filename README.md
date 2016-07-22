@@ -22,6 +22,16 @@ less $(python -c "from boltkit import driver; print(driver.__file__)")
 ```
 
 
+## Statement Runner [WORK IN PROGRESS]
+
+Resource: [`boltkit/runner.py`](boltkit/runner.py)
+
+Example:
+```
+boltrun "UNWIND range(1, 10) AS n RETURN n"
+```
+
+
 ## Stub Bolt Server [WORK IN PROGRESS]
 
 Resource: [`boltkit/server.py`](boltkit/server.py)
@@ -46,7 +56,7 @@ To run a stub server script:
 boltstub 7687 test/scripts/count.script
 ```
 
-To run a Cypher command:
+To run a Cypher command against the stub server:
 ```
-python -m boltkit.driver "UNWIND range(1, 10) AS n RETURN n"
+boltrun "UNWIND range(1, 10) AS n RETURN n"
 ```

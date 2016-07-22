@@ -38,18 +38,18 @@ So, let's get started.
 Neo4j provides a binary protocol, called Bolt, which is what we are actually targeting here. A
 Neo4j Bolt driver can be thought of as composed of three layers...
 
-1. Low-level data serialisation. For this, we use a custom serialisation format called
-   PackStream. While the design of this format is inspired heavily by MessagePack, it is not
-   compatible with it. PackStream provides a type system that is fully compatible with the Cypher
-   type system used by Neo4j and also takes extension data types in a different direction to
-   MessagePack. More on PackStream shortly.
-2. Bolt messaging. At its heart, the Bolt protocol provides a stateful request-response
+1. Data serialisation. For this, we use a custom serialisation format called PackStream. While the
+   design of this format is inspired heavily by MessagePack, it is not compatible with it.
+   PackStream provides a type system that is fully compatible with the Cypher type system used by
+   Neo4j and also takes extension data types in a different direction to MessagePack. More on
+   PackStream shortly.
+2. Bolt connections. At its heart, the Bolt protocol provides a stateful request-response
    mechanism. Each request consists of a textual statement plus a map or dictionary of
    parameters; each response is comprised of a stream of content plus some summary metadata.
    Message pipelining comes for free: a Bolt server will queue requests and respond to them in
    the same order in which they were received. A Bolt client therefore has a degree of
    flexibility in how and when it sends requests and how and when it gathers the responses.
-3. The Session API. Compliant drivers adhere to a standardised API design that sits atop the
+3. The Driver API. Compliant drivers adhere to a standardised API design that sits atop the
    messaging layer. This provides a consistent vocabulary and pattern of usage for application
    developers, regardless of language. Though this is of course a minimum. Any driver author
    should feel free to innovate around this and provide any amount of language-idiomatic extras
@@ -60,6 +60,7 @@ Neo4j Bolt driver can be thought of as composed of three layers...
 # You'll need to make sure you have the following items handy...
 from collections import deque
 from json import dumps as json_dumps
+from logging import getLogger
 from socket import create_connection
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import version_info
@@ -147,23 +148,23 @@ def h(data):
     return ":".join("{:02X}".format(b) for b in bytearray(data))
 
 
-def pack(*values):
+def packed(*values):
     """ This function provides PackStream values-to-bytes functionality, a process known as
     "packing". The signature of the method permits any number of values to be provided as
     positional arguments. Each will be serialised in order into the output byte stream.
 
-        >>> from boltkit.driver import pack
-        >>> h(pack(1))
+        >>> from boltkit.driver import packed
+        >>> h(packed(1))
         '01'
-        >>> h(pack(1234))
+        >>> h(packed(1234))
         'C9:04:D2'
-        >>> h(pack(6.283185307179586))
+        >>> h(packed(6.283185307179586))
         'C1:40:19:21:FB:54:44:2D:18'
-        >>> h(pack(False))
+        >>> h(packed(False))
         'C2'
-        >>> h(pack("Übergröße"))
+        >>> h(packed("Übergröße"))
         '8C:C3:9C:62:65:72:67:72:C3:B6:C3:9F:65'
-        >>> h(pack([1, True, 3.14, "fünf"]))
+        >>> h(packed([1, True, 3.14, "fünf"]))
         '94:01:C3:C1:40:09:1E:B8:51:EB:85:1F:85:66:C3:BC:6E:66'
 
     Markers
@@ -201,9 +202,9 @@ def pack(*values):
     # First, let's define somewhere to collect the individual byte pieces and grab a couple of
     # handles to commonly-used methods.
     #
-    packed = []
-    append = packed.append
-    extend = packed.extend
+    data = []
+    append = data.append
+    extend = data.extend
 
     # Next we'll iterate through the values in turn and add the output to our collection of byte
     # pieces.
@@ -323,8 +324,8 @@ def pack(*values):
         #     "Größenmaßstäbe" -> D0:12:47:72:C3:B6:C3:9F:65:6E:6D:61:C3:9F:73:74:C3:A4:62:65
         #
         elif isinstance(value, string):
-            data = value.encode("UTF-8")
-            size = len(data)
+            utf_8 = value.encode("UTF-8")
+            size = len(utf_8)
             if size < 0x10:
                 append(raw_pack(UINT_8, 0x80 + size))
             elif size < 0x100:
@@ -338,7 +339,7 @@ def pack(*values):
                 append(raw_pack(UINT_32, size))
             else:
                 raise ValueError("String too long to pack")
-            append(data)
+            append(utf_8)
 
         # Lists
         # -----
@@ -388,7 +389,7 @@ def pack(*values):
                 append(raw_pack(UINT_32, size))
             else:
                 raise ValueError("List too long to pack")
-            extend(map(pack, value))
+            extend(map(packed, value))
 
         # Maps
         # ----
@@ -439,7 +440,7 @@ def pack(*values):
                 append(raw_pack(UINT_32, size))
             else:
                 raise ValueError("Dictionary too long to pack")
-            extend(pack(k, v) for k, v in value.items())
+            extend(packed(k, v) for k, v in value.items())
 
         # Structures
         # ----------
@@ -487,7 +488,7 @@ def pack(*values):
             else:
                 raise ValueError("Structure too big to pack")
             append(raw_pack(UINT_8, signature))
-            extend(map(pack, fields))
+            extend(map(packed, fields))
 
         # For anything else, we'll just raise an error as we don't know how to encode it.
         #
@@ -497,10 +498,13 @@ def pack(*values):
     # Finally, we can glue all the individual pieces together and return the full byte
     # representation of the original values.
     #
-    return b"".join(packed)
+    return b"".join(data)
 
 
 class Packed(object):
+    """ The Packed class provides a framework for "unpacking" packed data. Given a string of byte
+    data and an initial offset, values can be extracted via the unpack method.
+    """
 
     def __init__(self, data, offset=0):
         self.data = data
@@ -573,115 +577,89 @@ class Packed(object):
                 raise ValueError("Unknown marker byte {:02X}".format(marker_byte))
 
 
-def unpack(data, offset=0):
+def unpacked(data, offset=0):
     return next(Packed(data, offset).unpack())
 
 
-# CHAPTER 2: BOLT MESSAGING
-# =========================
+# CHAPTER 2: BOLT CONNECTIONS
+# ===========================
+# It's here that we get properly into the protocol. A Bolt connection operates under a
+# client-server model whereby a client sends requests to a server and the server responds
+# accordingly. There is no mechanism for a server to send a message at any other time, nor should
+# client software receive data when no message is expected.
 
-# TODO (protocol logging occurs here)
+# On successfully establishing a TCP connection to a listening server, the client should send a
+# fixed sequence of four bytes in order to declare to the server that it intends to speak Bolt.
+#
+# Fun fact: the four "magic" bytes are supposed to spell "GO GO BOLT!" when written in hex and
+# read through squinted eyes. Other hilarious phrases were considered and rejected.
+#
+BOLT = b"\x60\x60\xB0\x17"
 
-DEFAULT_PORT = 7687
-MAGIC = b"\x60\x60\xB0\x17"
+BOLT_VERSION = 1
+RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in [BOLT_VERSION, 0, 0, 0])
+
 MAX_CHUNK_SIZE = 65535
 
-# Dictionary of Bolt message names mapped to signature bytes
-BOLT = {
+# Dictionary of request message names mapped to signature bytes
+CLIENT = {
     "INIT": 0x01,               # 0000 0001 // INIT <user_agent> <auth_token>
     "ACK_FAILURE": 0x0E,        # 0000 1110 // ACK_FAILURE
     "RESET": 0x0F,              # 0000 1111 // RESET
     "RUN": 0x10,                # 0001 0000 // RUN <statement> <parameters>
     "DISCARD_ALL": 0x2F,        # 0010 1111 // DISCARD_ALL
     "PULL_ALL": 0x3F,           # 0011 1111 // PULL_ALL
+}
+
+# Dictionary of response message names mapped to signature bytes
+SERVER = {
     "SUCCESS": 0x70,            # 0111 0000 // SUCCESS <metadata>
     "RECORD": 0x71,             # 0111 0001 // RECORD <value>
     "IGNORED": 0x7E,            # 0111 1110 // IGNORED <metadata>
     "FAILURE": 0x7F,            # 0111 1111 // FAILURE <metadata>
 }
 
-
-def message_repr(tag, *data):
-    message_name = next(key for key, value in BOLT.items() if value == tag)
-    return "%s %s" % (message_name, " ".join(map(json_dumps, data)))
-
-
-def log(text, *args):
-    print(text % args)
+PACKED_ACK_FAILURE = packed((CLIENT["ACK_FAILURE"],))
+PACKED_RESET = packed((CLIENT["RESET"],))
+PACKED_DISCARD_ALL = packed((CLIENT["DISCARD_ALL"],))
+PACKED_PULL_ALL = packed((CLIENT["PULL_ALL"],))
 
 
-class ProtocolError(Exception):
-
-    pass
+log = getLogger("boltkit.connection")
 
 
-class Failure(Exception):
-
-    def __init__(self, request, **metadata):
-        super(Failure, self).__init__(metadata["message"])
-        self.code = metadata["code"]
-        self.request = request
+def prepare_init(user_agent, user, password):
+    auth_token = {"scheme": "basic", "principal": user, "credentials": password}
+    return packed((CLIENT["INIT"], user_agent, auth_token))
 
 
-class Request(object):
-    # Basic request that expects SUCCESS or FAILURE back: INIT, ACK_FAILURE or RESET
+def connect(address, packed_init):
+    """ Connect and perform a handshake in order to return a valid
+    Connection object, assuming a protocol version can be agreed.
+    """
 
-    metadata = None
-    complete = False
+    # Establish a connection to the host and port specified
+    log.info("~~ <CONNECT> \"%s\" %d", *address)
+    socket = create_connection(address)
 
-    def __init__(self, *message):
-        self.packed = pack(message)
-        self.repr = message_repr(*message)
+    log.info("C: <BOLT>")
+    socket.sendall(BOLT)
 
-    def __repr__(self):
-        return self.repr
+    # Send details of the protocol versions supported
+    log.info("C: <VERSION> %d", BOLT_VERSION)
+    socket.sendall(RAW_BOLT_VERSIONS)
 
-    def on_record(self, data):
-        raise ProtocolError("Response should not contain records")
+    # Handle the handshake response
+    raw_version = socket.recv(4)
+    version, = raw_unpack(UINT_32, raw_version)
+    log.info("S: <VERSION> %d", version)
 
-    def on_success(self, data):
-        self.metadata = data
-        self.complete = True
-
-    def on_failure(self, data):
-        self.complete = True
-        raise Failure(self, **data)
-
-    def on_ignored(self, data):
-        raise ProtocolError("Request should not be ignored")
-
-    def on_message(self, tag, data=None):
-        if tag == BOLT["RECORD"]:
-            self.on_record(data)
-        elif tag == BOLT["SUCCESS"]:
-            self.on_success(data)
-        elif tag == BOLT["FAILURE"]:
-            self.on_failure(data)
-        elif tag == BOLT["IGNORED"]:
-            self.on_ignored(data)
-        else:
-            raise ProtocolError("Unexpected response message")
-
-
-class QueryRequest(Request):
-    # Can be ignored (RUN, DISCARD_ALL)
-
-    ignored = False
-
-    def on_ignored(self, data):
-        self.ignored = data
-        self.complete = True
-
-
-class QueryStreamRequest(QueryRequest):
-    # Can return records (PULL_ALL)
-
-    def __init__(self, records, *message):
-        super(QueryStreamRequest, self).__init__(*message)
-        self.records = records
-
-    def on_record(self, data):
-        self.records.append(data or [])
+    if version == BOLT_VERSION:
+        return Connection(socket, packed_init)
+    else:
+        log.info("~~ <CLOSE> Could not negotiate protocol version")
+        socket.close()
+        raise RuntimeError("Could not negotiate protocol version")
 
 
 class Connection(object):
@@ -689,46 +667,51 @@ class Connection(object):
     are sent and received.
     """
 
-    def __init__(self, socket):
+    def __init__(self, socket, packed_init):
         self.socket = socket
-        self.outgoing = deque()
-        self.incoming = deque()
-
-    def init(self, user_agent, auth_token):
-        init = Request(BOLT["INIT"], user_agent, auth_token)
-        self.outgoing.append(init)
-        return self.sync(init)
+        self.log_queue = deque(["INIT ..."])
+        self.request_queue = deque([packed_init])
+        response = Response()
+        self.response_queue = deque([response])
+        self.sync(response)
 
     def reset(self):
-        reset = Request(BOLT["RESET"])
-        self.outgoing.append(reset)
-        return self.sync(reset)
+        self.log_queue.append("RESET")
+        self.request_queue.append(PACKED_RESET)
+        response = Response()
+        self.response_queue.append(response)
+        self.sync(response)
 
     def add_statement(self, statement, parameters, records=None):
         # returns pair of requests
-        run = QueryRequest(BOLT["RUN"], statement, parameters)
+        self.log_queue.append("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)))
+        self.request_queue.append(packed((CLIENT["RUN"], statement, parameters)))
         if records is None:
-            stream = QueryRequest(BOLT["DISCARD_ALL"])
+            self.log_queue.append("DISCARD_ALL")
+            self.request_queue.append(PACKED_DISCARD_ALL)
         else:
-            stream = QueryStreamRequest(records, BOLT["PULL_ALL"])
-        self.outgoing.extend([run, stream])
-        return run, stream
+            self.log_queue.append("PULL_ALL")
+            self.request_queue.append(PACKED_PULL_ALL)
+        run_response = QueryResponse()
+        stream_response = QueryResponse(records)
+        self.response_queue.extend([run_response, stream_response])
+        return run_response, stream_response
 
     def dispatch(self):
         """ Send all pending requests to the server.
         """
         data = []
+        append = data.append
 
-        while self.outgoing:
-            request = self.outgoing.popleft()
-            log("C: %r" % request)
-            for offset in range(0, len(request.packed), MAX_CHUNK_SIZE):
+        while self.request_queue:
+            request = self.request_queue.popleft()
+            log.info("C: %s", self.log_queue.popleft())
+            for offset in range(0, len(request), MAX_CHUNK_SIZE):
                 end = offset + MAX_CHUNK_SIZE
-                chunk = request.packed[offset:end]
-                data.append(raw_pack(UINT_16, len(chunk)))
-                data.append(chunk)
-            data.append(raw_pack(UINT_16, 0))
-            self.incoming.append(request)
+                chunk = request[offset:end]
+                append(raw_pack(UINT_16, len(chunk)))
+                append(chunk)
+            append(raw_pack(UINT_16, 0))
 
         if data:
             self.socket.sendall(b"".join(data))
@@ -744,77 +727,120 @@ class Connection(object):
             chunk_size, = raw_unpack(UINT_16, self.socket.recv(2))
             if chunk_size > 0:
                 data.append(self.socket.recv(chunk_size))
-        message = unpack(b"".join(data))
-        log("S: %s" % message_repr(*message))
+        message = unpacked(b"".join(data))
 
         # Handle message
-        request = self.incoming[0]
+        response = self.response_queue[0]
         try:
-            request.on_message(*message)
+            response.on_message(*message)
         except Failure as failure:
-            if isinstance(failure.request, QueryRequest):
-                self.outgoing.append(Request(BOLT["ACK_FAILURE"]))
+            if isinstance(failure.request, QueryResponse):
+                self.log_queue.append("ACK_FAILURE")
+                self.request_queue.append(PACKED_ACK_FAILURE)
+                self.response_queue.append(Response())
             else:
                 self.close()
             raise
         finally:
-            if request.complete:
-                self.incoming.popleft()
-        return not request.complete
+            if response.complete:
+                self.response_queue.popleft()
+        return not response.complete
 
     def sync(self, request):
         self.dispatch()
-        while request in self.incoming:
+        while request in self.response_queue:
             while self.fetch():
                 pass
         return request
 
     def close(self):
-        log("~~ [DISCONNECT]")
+        log.info("~~ <CLOSE>")
         self.socket.close()
 
 
-def connect(address):
-    """ Connect and perform a handshake in order to return a valid
-    Connection object, assuming a protocol version can be agreed.
-    """
+class Failure(Exception):
 
-    # Establish a connection to the host and port specified
-    log("~~ [CONNECT] %r", address)
-    socket = create_connection(address)
-
-    log("C: [MAGIC] %s", h(MAGIC))
-    socket.sendall(MAGIC)
-
-    # Send details of the protocol versions supported
-    supported_versions = [1, 0, 0, 0]
-    data = b"".join(raw_pack(UINT_32, version) for version in supported_versions)
-    log("C: [HANDSHAKE] %s", h(data))
-    socket.sendall(data)
-
-    # Handle the handshake response
-    data = socket.recv(4)
-    log("S: [HANDSHAKE] %s", h(data))
-    agreed_version, = raw_unpack(UINT_32, data)
-    if agreed_version == 1:
-        return Connection(socket)
-    else:
-        log("~~ [DISCONNECT] Could not negotiate protocol version")
-        socket.close()
-        raise RuntimeError("Could not negotiate protocol version")
+    def __init__(self, request, **metadata):
+        super(Failure, self).__init__(metadata["message"])
+        self.code = metadata["code"]
+        self.request = request
 
 
-# CHAPTER 3: SESSIONS
-# ===================
+class Response(object):
+    # Basic request that expects SUCCESS or FAILURE back: INIT, ACK_FAILURE or RESET
+
+    metadata = None
+    complete = False
+
+    def on_success(self, data):
+        log.info("S: SUCCESS %s", json_dumps(data))
+        self.metadata = data
+        self.complete = True
+
+    def on_failure(self, data):
+        log.info("S: FAILURE %s", json_dumps(data))
+        self.complete = True
+        raise Failure(self, **data)
+
+    def on_message(self, tag, data=None):
+        if tag == SERVER["SUCCESS"]:
+            self.on_success(data)
+        elif tag == SERVER["FAILURE"]:
+            self.on_failure(data)
+        else:
+            raise ProtocolError("Unexpected summary message %s received" % h(tag))
+
+
+class QueryResponse(Response):
+    # Can be ignored (RUN, DISCARD_ALL)
+    # Allows records
+
+    ignored = False
+
+    def __init__(self, records=None):
+        self.records = records
+
+    def on_record(self, data):
+        log.info("S: RECORD %s", json_dumps(data))
+        try:
+            self.records.append(data or [])
+        except AttributeError:
+            raise ProtocolError("Unexpected RECORD message received")
+
+    def on_ignored(self, data):
+        log.info("S: IGNORED %s", json_dumps(data))
+        self.ignored = data
+        self.complete = True
+
+    def on_message(self, tag, data=None):
+        if tag == SERVER["RECORD"]:
+            self.on_record(data)
+        elif tag == SERVER["IGNORED"]:
+            self.on_ignored(data)
+        else:
+            super(QueryResponse, self).on_message(tag, data)
+
+
+class ProtocolError(Exception):
+
+    pass
+
+
+# CHAPTER 3: DRIVER API
+# =====================
 
 
 class ConnectionPool(object):
 
-    def __init__(self, address, user_agent, auth_token):
+    connections = None
+
+    def __init__(self, address, user_agent, user, password):
         self.address = address
-        self.user_agent = user_agent
-        self.auth_token = auth_token
+        self.packed_init = prepare_init(user_agent, user, password)
         self.connections = set()
+
+    def __del__(self):
+        self.close()
 
     def acquire(self):
         """ Acquire connection from pool
@@ -822,12 +848,7 @@ class ConnectionPool(object):
         try:
             connection = self.connections.pop()
         except KeyError:
-            connection = connect(self.address)
-            try:
-                connection.init(self.user_agent, self.auth_token)
-            except Failure:
-                connection.close()
-                raise ProtocolError("Failed to init connection")
+            connection = connect(self.address, self.packed_init)
         return connection
 
     def release(self, connection):
@@ -849,19 +870,34 @@ class ConnectionPool(object):
 
 class Driver(object):
 
-    def __init__(self, uri, user_agent, auth_token):
+    port = 7687
+    user_agent = "boltkit-driver/1.0.0"
+    user = "neo4j"
+
+    connection_pool = None  # Declared here as the destructor references it
+
+    def __init__(self, uri, **config):
         parsed = urlparse(uri)
         if parsed.scheme == "bolt":
-            address = parsed.hostname, parsed.port or DEFAULT_PORT
-            self.connection_pool = ConnectionPool(address, user_agent, auth_token)
+            if parsed.port:
+                self.port = parsed.port
+            address = parsed.hostname, self.port
+            self.user_agent = config.get("user_agent", self.user_agent)
+            self.user = config.get("user", self.user)
+            password = config.get("password")
+            self.connection_pool = ConnectionPool(address, self.user_agent, self.user, password)
         else:
             raise ValueError("Unsupported URI scheme %r" % parsed.scheme)
+
+    def __del__(self):
+        self.close()
 
     def session(self):
         return Session(self.connection_pool)
 
     def close(self):
-        self.connection_pool.close()
+        if self.connection_pool:
+            self.connection_pool.close()
 
 
 class Session(object):
@@ -887,6 +923,7 @@ class Session(object):
 class StatementResult(object):
 
     def __init__(self, connection, statement, parameters):
+        # shares a connection, never closes or explicitly releases it
         self.connection = connection
         self.records = deque()
         self.run, self.stream = connection.add_statement(statement, parameters, self.records)
@@ -905,16 +942,3 @@ class StatementResult(object):
     def summary(self):
         self.buffer()
         return self.stream.metadata
-
-
-def main():
-    from sys import argv
-    driver = Driver(u"bolt://localhost:7687", u"DemoDriver/1.1",
-                    {u"scheme": u"basic", u"principal": u"neo4j", u"credentials": u"password"})
-    session = driver.session()
-    session.run(argv[1]).consume()
-    driver.close()
-
-
-if __name__ == "__main__":
-    main()
