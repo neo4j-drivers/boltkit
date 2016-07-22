@@ -596,6 +596,24 @@ def unpacked(data, offset=0):
 #
 BOLT = b"\x60\x60\xB0\x17"
 
+# After the protocol announcement comes version negotiation. The client proposes to the server up
+# to four protocol versions that it is able to support in order of preference. Each protocol
+# version is a 32-bit unsigned integer and zeroes are used to fill the gaps if the client knows
+# fewer than four versions.
+#
+# In response, the server replies with a single version number on which it agrees. If for some
+# reason it can't agree, it returns a zero and disconnects immediately.
+#
+# Now that you've read and absorbed all that, push it to the back of your brain. As there currently
+# exists only one version of Bolt, the negotiation turns out to be far more simple than that. The
+# server and client send the following to each other:
+#
+#   C: 00:00:00:01 00:00:00:00 00:00:00:00 00:00:00:00
+#   S: 00:00:00:01
+#
+# And that's it. If the server responds with anything else, hang up and get in touch. We may have a
+# problem.
+#
 BOLT_VERSION = 1
 RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in [BOLT_VERSION, 0, 0, 0])
 
@@ -686,16 +704,17 @@ class Connection(object):
         # returns pair of requests
         self.log_queue.append("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)))
         self.request_queue.append(packed((CLIENT["RUN"], statement, parameters)))
+        run_response = QueryResponse()
         if records is None:
             self.log_queue.append("DISCARD_ALL")
             self.request_queue.append(PACKED_DISCARD_ALL)
+            consume_response = QueryResponse()
         else:
             self.log_queue.append("PULL_ALL")
             self.request_queue.append(PACKED_PULL_ALL)
-        run_response = QueryResponse()
-        stream_response = QueryResponse(records)
-        self.response_queue.extend([run_response, stream_response])
-        return run_response, stream_response
+            consume_response = QueryStreamResponse(records)
+        self.response_queue.extend([run_response, consume_response])
+        return run_response, consume_response
 
     def dispatch(self):
         """ Send all pending requests to the server.
@@ -792,20 +811,9 @@ class Response(object):
 
 
 class QueryResponse(Response):
-    # Can be ignored (RUN, DISCARD_ALL)
-    # Allows records
+    # Can also be IGNORED (RUN, DISCARD_ALL)
 
     ignored = False
-
-    def __init__(self, records=None):
-        self.records = records
-
-    def on_record(self, data):
-        log.info("S: RECORD %s", json_dumps(data))
-        try:
-            self.records.append(data or [])
-        except AttributeError:
-            raise ProtocolError("Unexpected RECORD message received")
 
     def on_ignored(self, data):
         log.info("S: IGNORED %s", json_dumps(data))
@@ -813,12 +821,28 @@ class QueryResponse(Response):
         self.complete = True
 
     def on_message(self, tag, data=None):
-        if tag == SERVER["RECORD"]:
-            self.on_record(data)
-        elif tag == SERVER["IGNORED"]:
+        if tag == SERVER["IGNORED"]:
             self.on_ignored(data)
         else:
             super(QueryResponse, self).on_message(tag, data)
+
+
+class QueryStreamResponse(QueryResponse):
+    # Allows RECORD messages back as well (PULL_ALL)
+
+    def __init__(self, records=None):
+        self.records = records
+
+    def on_record(self, data):
+        log.info("S: RECORD %s", json_dumps(data))
+        if self.records:
+            self.records.append(data or [])
+
+    def on_message(self, tag, data=None):
+        if tag == SERVER["RECORD"]:
+            self.on_record(data)
+        else:
+            super(QueryStreamResponse, self).on_message(tag, data)
 
 
 class ProtocolError(Exception):
