@@ -646,7 +646,7 @@ PACKED_PULL_ALL = packed((CLIENT["PULL_ALL"],))
 log = getLogger("boltkit.connection")
 
 
-def connect(address, user_agent, user, password):
+def connect(address, connection_settings):
     """ Connect and perform a handshake in order to return a valid
     Connection object, assuming a protocol version can be agreed.
     """
@@ -668,22 +668,30 @@ def connect(address, user_agent, user, password):
     log.info("S: <VERSION> %d", version)
 
     if version == BOLT_VERSION:
-        return Connection(socket, user_agent, user, password)
+        return Connection(socket, connection_settings)
     else:
         log.info("~~ <CLOSE> Could not negotiate protocol version")
         socket.close()
         raise RuntimeError("Could not negotiate protocol version")
 
 
+class ConnectionSettings(object):
+
+    def __init__(self, user, password, user_agent=None):
+        self.user = user
+        auth_token = {"scheme": "basic", "principal": user, "credentials": password}
+        self.user_agent = user_agent
+        self.packed_init = packed((CLIENT["INIT"], user_agent, auth_token))
+
+
 class Connection(object):
     """ The Connection wraps the socket through which all protocol messages are sent and received.
     """
 
-    def __init__(self, socket, user_agent, user, password):
+    def __init__(self, socket, connection_settings):
         self.socket = socket
         self.logs = deque(["INIT ..."])
-        auth_token = {"scheme": "basic", "principal": user, "credentials": password}
-        self.requests = deque([packed((CLIENT["INIT"], user_agent, auth_token))])
+        self.requests = deque([connection_settings.packed_init])
         self.flush()
         response = Response()
         self.responses = deque([response])
@@ -849,11 +857,9 @@ class ConnectionPool(object):
 
     connections = None
 
-    def __init__(self, address, user_agent, user, password):
+    def __init__(self, address, connection_settings):
         self.address = address
-        self.user_agent = user_agent
-        self.user = user
-        self.password = password
+        self.connection_settings = connection_settings
         self.connections = set()
 
     def __del__(self):
@@ -865,7 +871,7 @@ class ConnectionPool(object):
         try:
             connection = self.connections.pop()
         except KeyError:
-            connection = connect(self.address, self.user_agent, self.user, self.password)
+            connection = connect(self.address, self.connection_settings)
         return connection
 
     def release(self, connection):
@@ -889,7 +895,6 @@ class Driver(object):
 
     port = 7687
     user_agent = "boltkit-driver/1.0.0"
-    user = "neo4j"
 
     connection_pool = None  # Declared here as the destructor references it
 
@@ -900,9 +905,9 @@ class Driver(object):
                 self.port = parsed.port
             address = parsed.hostname, self.port
             self.user_agent = config.get("user_agent", self.user_agent)
-            self.user = config.get("user", self.user)
-            password = config.get("password")
-            self.connection_pool = ConnectionPool(address, self.user_agent, self.user, password)
+            self.connection_settings = ConnectionSettings(config["user"], config["password"],
+                                                          self.user_agent)
+            self.connection_pool = ConnectionPool(address, self.connection_settings)
         else:
             raise ValueError("Unsupported URI scheme %r" % parsed.scheme)
 

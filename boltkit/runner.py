@@ -26,10 +26,9 @@ from .watcher import watch
 
 def run():
     watch("boltkit.connection")
-    driver = Driver("bolt://localhost:7687", password="password")
+    driver = Driver("bolt://localhost:7687", user="neo4j", password="password")
     session = driver.session()
     result = session.run(argv[1])
-    #result.fill()
     while result.forward():
         print("\t".join(map(string, result.current)))
     session.close()
