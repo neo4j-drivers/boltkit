@@ -156,7 +156,8 @@ class StubServer(Thread):
         responses = self.script.match_responses()
         colour = green
         if not responses and self.script.match_auto_request(request):
-            responses = [(SERVER["SUCCESS"], {"fields": []} if request[0] == CLIENT["RUN"] else {})]
+            responses = [(SERVER["SUCCESS"], {u"fields": []}
+                         if request[0] == CLIENT["RUN"] else {})]
             colour = blue
         for response in responses:
             data = packed(response)
