@@ -49,11 +49,11 @@ Neo4j Bolt driver can be thought of as composed of three layers...
    Message pipelining comes for free: a Bolt server will queue requests and respond to them in
    the same order in which they were received. A Bolt client therefore has a degree of
    flexibility in how and when it sends requests and how and when it gathers the responses.
-3. The Driver API. Compliant drivers adhere to a standardised API design that sits atop the
-   messaging layer. This provides a consistent vocabulary and pattern of usage for application
-   developers, regardless of language. Though this is of course a minimum. Any driver author
-   should feel free to innovate around this and provide any amount of language-idiomatic extras
-   that are appropriate or desirable.
+3. The Session API. Compliant drivers adhere to a standardised API design that sits atop the
+   messaging layer, commonly known as the Session API. This provides a consistent vocabulary and
+   pattern of usage for application developers, regardless of language. Though this is of course a
+   minimum: any driver author should feel free to innovate around this and provide any amount of
+   language-idiomatic extras that are appropriate or desirable.
 
 """
 
@@ -716,7 +716,7 @@ class Connection(object):
         return head, tail
 
     def flush(self):
-        """ Send all pending request messsages to the server.
+        """ Send all pending request messages to the server.
         """
         if not self.requests:
             return
@@ -733,7 +733,8 @@ class Connection(object):
         self.socket.sendall(b"".join(data))
 
     def fetch(self):
-        """ Receive exactly one response message from the server
+        """ Receive exactly one response message from the server. This method blocks until either a
+        message arrives or the connection is terminated.
         """
 
         # Receive chunks of data until chunk_size == 0
@@ -840,8 +841,8 @@ class ProtocolError(Exception):
     pass
 
 
-# CHAPTER 3: DRIVER API
-# =====================
+# CHAPTER 3: SESSION API
+# ======================
 
 
 class ConnectionPool(object):
@@ -928,7 +929,7 @@ class Session(object):
         self.close()
 
     def run(self, statement, parameters=None):
-        return StatementResult(self.connection, statement, parameters or {})
+        return Result(self.connection, statement, parameters or {})
 
     def close(self):
         if self.connection:
@@ -936,13 +937,16 @@ class Session(object):
             self.connection = None
 
 
-class StatementResult(object):
+class Result(object):
+    # API spec: can be named Result or ***Result
+    #           will generally define idiomatic iteration
 
     def __init__(self, connection, statement, parameters):
         # shares a connection, never closes or explicitly releases it
         self.connection = connection
-        self.records = deque()
-        self.head, self.tail = connection.add_statement(statement, parameters, self.records)
+        self.current = None
+        self.buffer = deque()  # additions made by Response, removals here
+        self.head, self.tail = connection.add_statement(statement, parameters, self.buffer)
 
     def keys(self):
         self.connection.flush()
@@ -950,27 +954,25 @@ class StatementResult(object):
             self.connection.fetch()
         return self.head.metadata.get("fields", [])
 
-    def next(self):
+    def forward(self):
         try:
-            return self.records.popleft()
+            self.current = self.buffer.popleft()
         except IndexError:
             if self.tail.complete():
-                return None
+                return False
             else:
                 self.connection.flush()
-                while not self.records and not self.tail.complete():
+                while not self.buffer and not self.tail.complete():
                     self.connection.fetch()
-                return self.next()
+                return self.forward()
+        else:
+            return True
 
-    def buffer(self):
+    def fill(self):
         self.connection.flush()
         while not self.tail.complete():
             self.connection.fetch()
 
-    def consume(self):
-        self.buffer()
-        self.records.clear()
-
     def summary(self):
-        self.buffer()
+        self.fill()
         return self.tail.metadata

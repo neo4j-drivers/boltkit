@@ -29,9 +29,9 @@ def run():
     driver = Driver("bolt://localhost:7687", password="password")
     session = driver.session()
     result = session.run(argv[1])
-    result.buffer()
-    for record in result.records:
-        print("\t".join(map(string, record)))
+    #result.fill()
+    while result.forward():
+        print("\t".join(map(string, result.current)))
     session.close()
     driver.close()
 
