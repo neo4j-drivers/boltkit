@@ -30,7 +30,7 @@ def run():
     session = driver.session()
     result = session.run(argv[1])
     while result.forward():
-        print("\t".join(map(string, result.current)))
+        print("\t".join(map(string, result.current())))
     session.close()
     driver.close()
 

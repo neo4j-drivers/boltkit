@@ -685,7 +685,8 @@ class ConnectionSettings(object):
 
 
 class Connection(object):
-    """ The Connection wraps the socket through which all protocol messages are sent and received.
+    """ The Connection wraps a socket through which protocol messages are sent and received. The
+    socket is owned by this Connection instance...
     """
 
     def __init__(self, socket, connection_settings):
@@ -695,15 +696,6 @@ class Connection(object):
         self.flush()
         response = Response()
         self.responses = deque([response])
-        while not response.complete():
-            self.fetch()
-
-    def reset(self):
-        self.logs.append("RESET")
-        self.requests.append(PACKED_RESET)
-        self.flush()
-        response = Response()
-        self.responses.append(response)
         while not response.complete():
             self.fetch()
 
@@ -769,6 +761,15 @@ class Connection(object):
         finally:
             if response.complete():
                 self.responses.popleft()
+
+    def reset(self):
+        self.logs.append("RESET")
+        self.requests.append(PACKED_RESET)
+        self.flush()
+        response = Response()
+        self.responses.append(response)
+        while not response.complete():
+            self.fetch()
 
     def close(self):
         log.info("~~ <CLOSE>")
@@ -944,14 +945,14 @@ class Session(object):
 
 class Result(object):
     # API spec: can be named Result or ***Result
-    #           will generally define idiomatic iteration
+    #           will generally define idiomatic iteration atop forward() and current()
 
     def __init__(self, connection, statement, parameters):
         # shares a connection, never closes or explicitly releases it
         self.connection = connection
-        self.current = None
-        self.buffer = deque()  # additions made by Response, removals here
-        self.head, self.tail = connection.add_statement(statement, parameters, self.buffer)
+        # additions made by Response, removals here
+        self.records = deque([None])
+        self.head, self.tail = connection.add_statement(statement, parameters, self.records)
 
     def keys(self):
         self.connection.flush()
@@ -959,25 +960,26 @@ class Result(object):
             self.connection.fetch()
         return self.head.metadata.get("fields", [])
 
-    def forward(self):
-        try:
-            self.current = self.buffer.popleft()
-        except IndexError:
-            if self.tail.complete():
-                return False
-            else:
-                self.connection.flush()
-                while not self.buffer and not self.tail.complete():
-                    self.connection.fetch()
-                return self.forward()
-        else:
-            return True
+    def current(self):
+        return self.records[0]
 
-    def fill(self):
+    def forward(self):
+        if len(self.records) > 1:
+            self.records.popleft()
+            return True
+        elif self.tail.complete():
+            return False
+        else:
+            self.connection.flush()
+            while len(self.records) == 1 and not self.tail.complete():
+                self.connection.fetch()
+            return self.forward()
+
+    def buffer(self):
         self.connection.flush()
         while not self.tail.complete():
             self.connection.fetch()
 
     def summary(self):
-        self.fill()
+        self.buffer()
         return self.tail.metadata
