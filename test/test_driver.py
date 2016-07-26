@@ -18,19 +18,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from os.path import dirname, join as path_join
 from unittest import TestCase
 
-
-class PackingTestCase(TestCase):
-
-    pass
+from boltkit.driver import Driver
+from boltkit.server import StubServer
 
 
-class UnpackingTestCase(TestCase):
+class DriverTestCase(TestCase):
 
-    pass
+    port = 7687
+    address = ("127.0.0.1", port)
+    script = path_join(dirname(__file__), "scripts", "connect.script")
+    timeout = 5
 
+    def setUp(self):
+        self.server = StubServer(self.address, self.script, self.timeout)
+        self.server.start()
 
-class MessagingTestCase(TestCase):
+    def tearDown(self):
+        self.server.stop()
 
-    pass
+    def test_driver_can_create_session_with_full_uri(self):
+        # Given
+        driver = Driver("bolt://127.0.0.1:7687", user="neo4j", password="password")
+
+        # When
+        session = driver.session()
+
+        # Then
+        address = session.connection.socket.getpeername()
+        assert address == ("127.0.0.1", 7687), "Session not connected to expected address"
+
+    def test_driver_can_create_session_with_default_port(self):
+        # Given
+        driver = Driver("bolt://127.0.0.1", user="neo4j", password="password")
+
+        # When
+        session = driver.session()
+
+        # Then
+        address = session.connection.socket.getpeername()
+        assert address == ("127.0.0.1", 7687), "Session not connected to expected address"

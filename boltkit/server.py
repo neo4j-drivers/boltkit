@@ -29,6 +29,7 @@ try:
     from json import JSONDecodeError
 except ImportError:
     JSONDecodeError = ValueError
+from logging import getLogger
 from os.path import basename
 from select import select
 from socket import socket, SOL_SOCKET, SO_REUSEADDR
@@ -37,10 +38,13 @@ from sys import argv, exit
 from threading import Thread
 
 from .driver import h, UINT_16, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSION
-from .watcher import red, green, blue
+from.watcher import watch
 
 
 TIMEOUT = 30
+
+
+log = getLogger("boltkit.server")
 
 
 def message_repr(tag, *data):
@@ -48,166 +52,11 @@ def message_repr(tag, *data):
     return "%s %s" % (name, " ".join(map(json_dumps, data)))
 
 
-def write(text, *args, **kwargs):
-    colour = kwargs.get("colour")
-    if colour:
-        print(colour(text % args))
-    else:
-        print(text % args)
-
-
 class Peer(object):
 
     def __init__(self, address):
         self.address = address
         self.version = 0
-
-
-class StubServer(Thread):
-
-    def __init__(self, address, script):
-        super(StubServer, self).__init__()
-        self.server = socket()
-        self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        self.server.bind(address)
-        self.server.listen(0)
-        self.peers = {self.server: Peer(address)}
-        self.script = script
-        self.running = True
-
-    def run(self):
-        while self.running:
-            read_list, _, _ = select(list(self.peers), [], [], TIMEOUT)
-            if read_list:
-                for sock in read_list:
-                    self.read(sock)
-            else:
-                write("C: <TIMEOUT> %ds" % TIMEOUT, colour=red)
-                exit(1)
-
-    def read(self, sock):
-        if sock == self.server:
-            self.accept(sock)
-        elif self.peers[sock].version:
-            self.handle_request(sock)
-        else:
-            self.handshake(sock)
-
-    def close(self, sock):
-        write("~~ <CLOSE> \"%s\" %d", *self.peers[sock].address)
-        del self.peers[sock]
-        sock.close()
-        self.running = False
-
-    def accept(self, sock):
-        new_sock, address = sock.accept()
-        self.peers[new_sock] = Peer(address)
-        listen_address = self.peers[sock].address
-        serve_address = self.peers[new_sock].address
-        write("~~ <ACCEPT> \"%s\" %d -> %d", listen_address[0], listen_address[1], serve_address[1])
-
-    def handshake(self, sock):
-        data = sock.recv(4)
-        if data == BOLT:
-            write("C: <BOLT>")
-        else:
-            write("C: <#?@!>")
-            self.close(sock)
-            return
-        raw_data = sock.recv(16)
-        # TODO: proper version negotiation
-        write("C: <VERSION> %s" % h(raw_data))
-        response = raw_data[0:4]
-        write("S: <VERSION> %d" % BOLT_VERSION)
-        sock.send(response)
-        self.peers[sock].version = 1
-
-    def handle_request(self, sock):
-        chunked_data = b""
-        message_data = b""
-        chunk_size = -1
-        debug = []
-        while chunk_size != 0:
-            chunk_header = sock.recv(2)
-            if len(chunk_header) == 0:
-                self.close(sock)
-                return
-            chunked_data += chunk_header
-            chunk_size, = raw_unpack(UINT_16, chunk_header)
-            if chunk_size > 0:
-                chunk = sock.recv(chunk_size)
-                chunked_data += chunk
-                message_data += chunk
-            else:
-                chunk = b""
-            debug.append("     [%s] %s" % (h(chunk_header), h(chunk)))
-        request = unpacked(message_data)
-
-        if self.script.match_request(request):
-            # explicitly matched
-            write("C: %s", message_repr(*request), colour=green)
-        elif self.script.match_auto_request(request):
-            # auto matched
-            write("C: %s", message_repr(*request), colour=blue)
-        else:
-            # not matched
-            write("C: %s", message_repr(*request), colour=red)
-
-        responses = self.script.match_responses()
-        colour = green
-        if not responses and self.script.match_auto_request(request):
-            responses = [(SERVER["SUCCESS"], {u"fields": []}
-                         if request[0] == CLIENT["RUN"] else {})]
-            colour = blue
-        for response in responses:
-            data = packed(response)
-            self.send_chunk(sock, data)
-            self.send_chunk(sock)
-            write("S: %s", message_repr(*response), colour=colour)
-
-    def send_chunk(self, sock, data=b""):
-        header = raw_pack(UINT_16, len(data))
-        sock.send(header)
-        return "[%s] %s" % (h(header), self.send_bytes(sock, data))
-
-    def send_bytes(self, sock, data):
-        sock.send(data)
-        return h(data)
-
-
-class StubCluster(object):
-
-    def __init__(self, specs):
-        self.specs = specs
-        self.servers = []
-        for spec in self.specs:
-            bind_address = ("127.0.0.1", spec.port)
-            server = StubServer(bind_address, spec.script)
-            self.servers.append(server)
-
-    def start(self):
-        for server in self.servers:
-            server.daemon = True
-            server.start()
-
-    def is_alive(self):
-        is_alive = False
-        for server in self.servers:
-            is_alive = is_alive or server.is_alive()
-        return is_alive
-
-    def scripts_consumed(self):
-        for server in self.servers:
-            if server.script:
-                return False
-        return True
-
-
-class ServerSpec(object):
-
-    def __init__(self, port, script):
-        self.port = port
-        self.script = script
 
 
 class Line(object):
@@ -223,9 +72,11 @@ class Line(object):
 
 class Script(object):
 
-    def __init__(self):
+    def __init__(self, file_name=None):
         self.auto = []
         self.lines = deque()
+        if file_name:
+            self.append(file_name)
 
     def __nonzero__(self):
         return bool(self.lines)
@@ -310,22 +161,167 @@ def match(expected, actual):
     return expected == actual
 
 
+class StubServer(Thread):
+
+    script = Script()
+
+    def __init__(self, address, script_name=None, timeout=None):
+        super(StubServer, self).__init__()
+        self.address = address
+        self.server = socket()
+        self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        self.server.bind(self.address)
+        self.server.listen(0)
+        self.peers = {}
+        if script_name:
+            self.script = Script(script_name)
+        self.running = True
+        self.timeout = timeout or TIMEOUT
+
+    def __del__(self):
+        self.stop()
+
+    def run(self):
+        self.peers[self.server] = Peer(self.address)
+        while self.running:
+            read_list, _, _ = select(list(self.peers), [], [], self.timeout)
+            if read_list:
+                for sock in read_list:
+                    self.read(sock)
+            else:
+                log.error("C: <TIMEOUT> %ds", self.timeout)
+                exit(1)
+
+    def stop(self):
+        peers, self.peers, self.running = list(self.peers.items()), {}, False
+        for sock, peer in peers:
+            log.info("~~ <CLOSE> \"%s\" %d", *peer.address)
+            sock.close()
+
+    def read(self, sock):
+        try:
+            if sock == self.server:
+                self.accept(sock)
+            elif self.peers[sock].version:
+                self.handle_request(sock)
+            else:
+                self.handshake(sock)
+        except (KeyError, OSError):
+            if self.running:
+                raise
+
+    def accept(self, sock):
+        new_sock, address = sock.accept()
+        self.peers[new_sock] = Peer(address)
+        listen_address = self.peers[sock].address
+        serve_address = self.peers[new_sock].address
+        log.info("~~ <ACCEPT> \"%s\" %d -> %d", listen_address[0], listen_address[1], serve_address[1])
+
+    def handshake(self, sock):
+        data = sock.recv(4)
+        if data == BOLT:
+            log.info("C: <BOLT>")
+        else:
+            log.error("C: <#?@!>")
+            self.stop()
+            return
+        raw_data = sock.recv(16)
+        # TODO: proper version negotiation
+        log.info("C: <VERSION> %s" % h(raw_data))
+        response = raw_data[0:4]
+        log.info("S: <VERSION> %d" % BOLT_VERSION)
+        sock.send(response)
+        self.peers[sock].version = 1
+
+    def handle_request(self, sock):
+        chunked_data = b""
+        message_data = b""
+        chunk_size = -1
+        debug = []
+        while chunk_size != 0:
+            chunk_header = sock.recv(2)
+            if len(chunk_header) == 0:
+                self.stop()
+                return
+            chunked_data += chunk_header
+            chunk_size, = raw_unpack(UINT_16, chunk_header)
+            if chunk_size > 0:
+                chunk = sock.recv(chunk_size)
+                chunked_data += chunk
+                message_data += chunk
+            else:
+                chunk = b""
+            debug.append("     [%s] %s" % (h(chunk_header), h(chunk)))
+        request = unpacked(message_data)
+
+        if self.script.match_request(request):
+            # explicitly matched
+            log.info("C: %s", message_repr(*request))
+        elif self.script.match_auto_request(request):
+            # auto matched
+            log.info("C! %s", message_repr(*request))
+        else:
+            # not matched
+            log.error("C: %s", message_repr(*request))
+
+        responses = self.script.match_responses()
+        if not responses and self.script.match_auto_request(request):
+            responses = [(SERVER["SUCCESS"], {u"fields": []}
+                         if request[0] == CLIENT["RUN"] else {})]
+        for response in responses:
+            data = packed(response)
+            self.send_chunk(sock, data)
+            self.send_chunk(sock)
+            log.info("S: %s", message_repr(*response))
+
+    def send_chunk(self, sock, data=b""):
+        header = raw_pack(UINT_16, len(data))
+        sock.send(header)
+        return "[%s] %s" % (h(header), self.send_bytes(sock, data))
+
+    def send_bytes(self, sock, data):
+        sock.send(data)
+        return h(data)
+
+
+class StubCluster(object):
+
+    def __init__(self, servers):
+        self.servers = servers
+
+    def start(self):
+        for server in self.servers:
+            server.daemon = True
+            server.start()
+
+    def is_alive(self):
+        is_alive = False
+        for server in self.servers:
+            is_alive = is_alive or server.is_alive()
+        return is_alive
+
+    def scripts_consumed(self):
+        for server in self.servers:
+            if server.script:
+                return False
+        return True
+
+
 def stub():
+    watch("boltkit.server")
     if len(argv) < 2:
         print("usage: %s <ports> <script> [<script> ...]" % basename(argv[0]))
         exit()
-    specs = []
+    servers = []
     for i, port_string in enumerate(argv[1].split(":"), start=2):
-        script = Script()
         try:
             script_name = argv[i]
         except IndexError:
-            pass
+            server = StubServer(("127.0.0.1", int(port_string)))
         else:
-            script.append(script_name)
-        spec = ServerSpec(int(port_string), script)
-        specs.append(spec)
-    cluster = StubCluster(specs)
+            server = StubServer(("127.0.0.1", int(port_string)), script_name)
+        servers.append(server)
+    cluster = StubCluster(servers)
     cluster.start()
     try:
         while cluster.is_alive():
