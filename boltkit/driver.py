@@ -751,7 +751,7 @@ class Connection(object):
         try:
             response.on_message(*message)
         except Failure as failure:
-            if isinstance(failure.request, QueryResponse):
+            if isinstance(failure.response, QueryResponse):
                 self.logs.append("ACK_FAILURE")
                 self.requests.append(PACKED_ACK_FAILURE)
                 self.responses.append(Response())
@@ -776,13 +776,6 @@ class Connection(object):
         self.socket.close()
 
 
-class Failure(Exception):
-
-    def __init__(self, **metadata):
-        super(Failure, self).__init__(metadata["message"])
-        self.code = metadata["code"]
-
-
 class Response(object):
     # Basic request that expects SUCCESS or FAILURE back: INIT, ACK_FAILURE or RESET
 
@@ -798,7 +791,7 @@ class Response(object):
     def on_failure(self, data):
         log.info("S: FAILURE %s", json_dumps(data))
         self.metadata = data
-        raise Failure(**data)
+        raise Failure(self)
 
     def on_message(self, tag, data=None):
         if tag == SERVER["SUCCESS"]:
@@ -807,6 +800,14 @@ class Response(object):
             self.on_failure(data)
         else:
             raise ProtocolError("Unexpected summary message %s received" % h(tag))
+
+
+class Failure(Exception):
+
+    def __init__(self, response):
+        super(Failure, self).__init__(response.metadata["message"])
+        self.response = response
+        self.code = response.metadata["code"]
 
 
 class QueryResponse(Response):
