@@ -225,7 +225,8 @@ class StubServer(Thread):
         if data == BOLT:
             log.info("C: <BOLT>")
         else:
-            log.error("C: <#?@!>")
+            if data:
+                log.error("C: <#?@!>")
             self.stop()
             return
         raw_data = sock.recv(16)
