@@ -778,10 +778,9 @@ class Connection(object):
 
 class Failure(Exception):
 
-    def __init__(self, request, **metadata):
+    def __init__(self, **metadata):
         super(Failure, self).__init__(metadata["message"])
         self.code = metadata["code"]
-        self.request = request
 
 
 class Response(object):
@@ -799,7 +798,7 @@ class Response(object):
     def on_failure(self, data):
         log.info("S: FAILURE %s", json_dumps(data))
         self.metadata = data
-        raise Failure(self, **data)
+        raise Failure(**data)
 
     def on_message(self, tag, data=None):
         if tag == SERVER["SUCCESS"]:
