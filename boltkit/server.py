@@ -163,6 +163,7 @@ def match(expected, actual):
 
 class StubServer(Thread):
 
+    peers = None
     script = Script()
 
     def __init__(self, address, script_name=None, timeout=None):
@@ -193,6 +194,8 @@ class StubServer(Thread):
                 exit(1)
 
     def stop(self):
+        if not self.peers:
+            return
         peers, self.peers, self.running = list(self.peers.items()), {}, False
         for sock, peer in peers:
             log.info("~~ <CLOSE> \"%s\" %d", *peer.address)
