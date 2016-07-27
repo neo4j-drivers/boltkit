@@ -637,11 +637,6 @@ SERVER = {
     "FAILURE": 0x7F,            # 0111 1111 // FAILURE <metadata>
 }
 
-PACKED_ACK_FAILURE = packed((CLIENT["ACK_FAILURE"],))
-PACKED_RESET = packed((CLIENT["RESET"],))
-PACKED_DISCARD_ALL = packed((CLIENT["DISCARD_ALL"],))
-PACKED_PULL_ALL = packed((CLIENT["PULL_ALL"],))
-
 
 log = getLogger("boltkit.connection")
 
@@ -681,7 +676,7 @@ class ConnectionSettings(object):
         self.user = user
         auth_token = {"scheme": "basic", "principal": user, "credentials": password}
         self.user_agent = user_agent
-        self.packed_init = packed((CLIENT["INIT"], user_agent, auth_token))
+        self.init_request = Request("INIT ...", CLIENT["INIT"], user_agent, auth_token)
 
 
 class Connection(object):
@@ -691,8 +686,7 @@ class Connection(object):
 
     def __init__(self, socket, connection_settings):
         self.socket = socket
-        self.logs = deque(["INIT ..."])
-        self.requests = deque([connection_settings.packed_init])
+        self.requests = deque([connection_settings.init_request])
         self.flush()
         response = Response()
         self.responses = deque([response])
@@ -701,16 +695,14 @@ class Connection(object):
 
     def add_statement(self, statement, parameters, records=None):
         # returns pair of requests
-        self.logs.append("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)))
-        self.requests.append(packed((CLIENT["RUN"], statement, parameters)))
+        self.requests.append(Request("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)),
+                             CLIENT["RUN"], statement, parameters))
         head = QueryResponse()
         if records is None:
-            self.logs.append("DISCARD_ALL")
-            self.requests.append(PACKED_DISCARD_ALL)
+            self.requests.append(DISCARD_ALL_REQUEST)
             tail = QueryResponse()
         else:
-            self.logs.append("PULL_ALL")
-            self.requests.append(PACKED_PULL_ALL)
+            self.requests.append(PULL_ALL_REQUEST)
             tail = QueryStreamResponse(records)
         self.responses.extend([head, tail])
         return head, tail
@@ -723,10 +715,10 @@ class Connection(object):
         data = []
         while self.requests:
             request = self.requests.popleft()
-            log.info("C: %s", self.logs.popleft())
-            for offset in range(0, len(request), MAX_CHUNK_SIZE):
+            log.info("C: %s", request.description)
+            for offset in range(0, len(request.data), MAX_CHUNK_SIZE):
                 end = offset + MAX_CHUNK_SIZE
-                chunk = request[offset:end]
+                chunk = request.data[offset:end]
                 data.append(raw_pack(UINT_16, len(chunk)))
                 data.append(chunk)
             data.append(raw_pack(UINT_16, 0))
@@ -752,8 +744,7 @@ class Connection(object):
             response.on_message(*message)
         except Failure as failure:
             if isinstance(failure.response, QueryResponse):
-                self.logs.append("ACK_FAILURE")
-                self.requests.append(PACKED_ACK_FAILURE)
+                self.requests.append(ACK_FAILURE_REQUEST)
                 self.responses.append(Response())
             else:
                 self.close()
@@ -763,8 +754,7 @@ class Connection(object):
                 self.responses.popleft()
 
     def reset(self):
-        self.logs.append("RESET")
-        self.requests.append(PACKED_RESET)
+        self.requests.append(RESET_REQUEST)
         self.flush()
         response = Response()
         self.responses.append(response)
@@ -774,6 +764,19 @@ class Connection(object):
     def close(self):
         log.info("~~ <CLOSE>")
         self.socket.close()
+
+
+class Request(object):
+
+    def __init__(self, description, *message):
+        self.description = description
+        self.data = packed(message)
+
+
+ACK_FAILURE_REQUEST = Request("ACK_FAILURE", CLIENT["ACK_FAILURE"])
+RESET_REQUEST = Request("RESET", CLIENT["RESET"])
+DISCARD_ALL_REQUEST = Request("DISCARD_ALL", CLIENT["DISCARD_ALL"])
+PULL_ALL_REQUEST = Request("PULL_ALL", CLIENT["PULL_ALL"])
 
 
 class Response(object):
@@ -800,14 +803,6 @@ class Response(object):
             self.on_failure(data)
         else:
             raise ProtocolError("Unexpected summary message %s received" % h(tag))
-
-
-class Failure(Exception):
-
-    def __init__(self, response):
-        super(Failure, self).__init__(response.metadata["message"])
-        self.response = response
-        self.code = response.metadata["code"]
 
 
 class QueryResponse(Response):
@@ -843,6 +838,14 @@ class QueryStreamResponse(QueryResponse):
             self.on_record(data)
         else:
             super(QueryStreamResponse, self).on_message(tag, data)
+
+
+class Failure(Exception):
+
+    def __init__(self, response):
+        super(Failure, self).__init__(response.metadata["message"])
+        self.response = response
+        self.code = response.metadata["code"]
 
 
 class ProtocolError(Exception):
