@@ -617,28 +617,90 @@ BOLT = b"\x60\x60\xB0\x17"
 BOLT_VERSION = 1
 RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in [BOLT_VERSION, 0, 0, 0])
 
-MAX_CHUNK_SIZE = 65535
-
-# Dictionary of request message names mapped to signature bytes
+# Once we've negotiated the (one and only) protocol version, we fall into the regular protocol
+# exchange. This consists of request and response messages, each of which is serialised as a
+# PackStream structure with a unique signature byte.
+#
+# The client sends messages from the selection below:
 CLIENT = {
-    "INIT": 0x01,               # 0000 0001 // INIT <user_agent> <auth_token>
-    "ACK_FAILURE": 0x0E,        # 0000 1110 // ACK_FAILURE
-    "RESET": 0x0F,              # 0000 1111 // RESET
-    "RUN": 0x10,                # 0001 0000 // RUN <statement> <parameters>
-    "DISCARD_ALL": 0x2F,        # 0010 1111 // DISCARD_ALL
-    "PULL_ALL": 0x3F,           # 0011 1111 // PULL_ALL
+    "INIT": 0x01,               # INIT <user_agent> <auth_token>
+                                # -> SUCCESS - connection initialised
+                                # -> FAILURE - init failed, disconnect (reconnect to retry)
+                                #
+                                # Initialisation is carried out once per connection, immediately
+                                # after version negotiation. Before this, no other messages may
+                                # validly be exchanged. INIT bundles with it two pieces of data:
+                                # a user agent string and a map of auth information. More detail on
+                                # on this can be found in the ConnectionSettings class below.
+
+    "ACK_FAILURE": 0x0E,        # ACK_FAILURE
+                                # -> SUCCESS - failure acknowledged
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # When a FAILURE occurs, no further actions may be carried out
+                                # until that failure has been acknowledged by the client. This
+                                # is a safety mechanism to prevent actions from being carried out
+                                # by the server when several requests have been optimistically sent
+                                # at the same time.
+
+    "RESET": 0x0F,              # RESET
+                                # -> SUCCESS - connection reset
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # A RESET is used to clear the connection state back to how it was
+                                # immediately following initialisation. Specifically, any
+                                # outstanding failure will be acknowledged, any result stream will
+                                # be discarded and any transaction will be rolled back. This is
+                                # used primarily by the connection pool.
+
+    "RUN": 0x10,                # RUN <statement> <parameters>
+                                # -> SUCCESS - statement accepted
+                                # -> FAILURE - statement not accepted
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+
+    "DISCARD_ALL": 0x2F,        # DISCARD_ALL
+                                # -> SUCCESS - result discarded
+                                # -> FAILURE - no result to discard
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+
+    "PULL_ALL": 0x3F,           # PULL_ALL
+                                # .. [RECORD*] - zero or more RECORDS may be returned first
+                                # -> SUCCESS - result complete
+                                # -> FAILURE - no result to pull
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+}
+#
+# The server responds with one or more of these for each request:
+SERVER = {
+    "SUCCESS": 0x70,            # SUCCESS <metadata>
+    "RECORD": 0x71,             # RECORD <value>
+    "IGNORED": 0x7E,            # IGNORED <metadata>
+    "FAILURE": 0x7F,            # FAILURE <metadata>
 }
 
-# Dictionary of response message names mapped to signature bytes
-SERVER = {
-    "SUCCESS": 0x70,            # 0111 0000 // SUCCESS <metadata>
-    "RECORD": 0x71,             # 0111 0001 // RECORD <value>
-    "IGNORED": 0x7E,            # 0111 1110 // IGNORED <metadata>
-    "FAILURE": 0x7F,            # 0111 1111 // FAILURE <metadata>
-}
+MAX_CHUNK_SIZE = 65535
 
 
 log = getLogger("boltkit.connection")
+
+
+# Connection API:
+#
+# - connect(address, connection_settings) -> Connection
+# - ConnectionSettings(user, password, user_agent)
+# - Connection(socket, connection_settings)
+# - Request(description, *message)
+# - Response()
+#   - QueryResponse()
+#     - QueryStreamResponse()
+# - Failure()
+# - ProtocolError()
 
 
 def connect(address, connection_settings):
@@ -825,13 +887,12 @@ class QueryResponse(Response):
 class QueryStreamResponse(QueryResponse):
     # Allows RECORD messages back as well (PULL_ALL)
 
-    def __init__(self, records=None):
+    def __init__(self, records):
         self.records = records
 
     def on_record(self, data):
         log.info("S: RECORD %s", json_dumps(data))
-        if self.records is not None:
-            self.records.append(data or [])
+        self.records.append(data or [])
 
     def on_message(self, tag, data=None):
         if tag == SERVER["RECORD"]:
