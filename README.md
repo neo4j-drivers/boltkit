@@ -134,7 +134,7 @@ S: SUCCESS {"fields": ["x"]}
 ```
 
 Then, create a test to use the stub:
-```
+```java
 @Test
 public void shouldBeAbleRunCypher() throws StubServer.ForceKilled, InterruptedException, IOException
 {
