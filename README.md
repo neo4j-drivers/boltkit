@@ -5,14 +5,16 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
 
 ## Installation
 
+The package can either be installed globally or within a *virtualenv*.
+Installation makes available several command line tools, the names of which all start with `bolt`.
 ```
 pip install boltkit
 ```
 
 
-## Demo Driver [WORK IN PROGRESS]
+## Demo Driver
 
-Resource: [`boltkit/driver.py`](boltkit/driver.py)
+- Source: [`boltkit/driver.py`](boltkit/driver.py)
 
 This file contains both a fully-working Neo4j driver as well as a step-by-step tutorial for how to implement a driver in any language.
 To view the code and tutorial in a terminal, use:
@@ -22,9 +24,10 @@ less $(python -c "from boltkit import driver; print(driver.__file__)")
 ```
 
 
-## Statement Runner [WORK IN PROGRESS]
+## Statement Runner
 
-Resource: [`boltkit/runner.py`](boltkit/runner.py)
+- Command: `boltrun <statement>`
+- Source: [`boltkit/runner.py`](boltkit/runner.py)
 
 Example:
 ```
@@ -32,9 +35,10 @@ boltrun "UNWIND range(1, 10) AS n RETURN n"
 ```
 
 
-## Stub Bolt Server [WORK IN PROGRESS]
+## Stub Bolt Server
 
-Resource: [`boltkit/server.py`](boltkit/server.py)
+- Command: `boltstub <port> <script>`
+- Source: [`boltkit/server.py`](boltkit/server.py)
 
 The stub Bolt server can be used as a testing resource for client software.
 Scripts can be created against which unit tests can be run without the need for a full Neo4j server.
@@ -48,8 +52,9 @@ When the client closes its connection, the server will shut down.
 If any script lines remain, the server will exit with an error status; if none remain it will exit successfully.
 
 Some messages, such as `INIT` and `RESET`, can be automatically (successfully) consumed if they are not relevant to the current test.
+For this use a script line such as `!: AUTO INIT`.
 
-### Example Usage
+### Command Line Usage
 
 To run a stub server script:
 ```
@@ -59,4 +64,99 @@ boltstub 7687 test/scripts/count.script
 To run a Cypher command against the stub server:
 ```
 boltrun "UNWIND range(1, 10) AS n RETURN n"
+```
+
+### Java Test Usage
+
+The stub server can be used from any environment from which command line tools can be executed.
+To use from Java, first construct a wrapper for the server:
+```java
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import static java.lang.Thread.sleep;
+import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
+
+public class StubServer
+{
+    // This may be thrown if the driver has not been closed properly
+    public static class ForceKilled extends Exception {}
+
+    private Process process = null;
+
+    private StubServer( String script, int port ) throws IOException, InterruptedException
+    {
+        List<String> command = new ArrayList<>();
+        // This assumes the `boltstub` command is available on the path
+        command.addAll( singletonList( "boltstub" ) );
+        command.addAll( asList( Integer.toString( port ), script ) );
+        ProcessBuilder server = new ProcessBuilder().inheritIO().command( command );
+        process = server.start();
+        sleep( 500 );  // might take a moment for the socket to start listening
+    }
+
+    public static StubServer start( String script, int port ) throws IOException, InterruptedException
+    {
+        return new StubServer( script, port );
+    }
+
+    public int exitStatus() throws InterruptedException, ForceKilled
+    {
+        sleep( 500 );  // wait for a moment to allow disconnection to occur
+        try
+        {
+            return process.exitValue();
+        }
+        catch ( IllegalThreadStateException ex )
+        {
+            // not exited yet
+            process.destroy();
+            process.waitFor();
+            throw new ForceKilled();
+        }
+    }
+
+}
+```
+
+Ensure you have a valid script available:
+```
+!: AUTO INIT
+!: AUTO RESET
+
+C: RUN "RETURN {x}" {"x": 1}
+   PULL_ALL
+S: SUCCESS {"fields": ["x"]}
+   RECORD [1]
+   SUCCESS {}
+```
+
+Then, create a test to use the stub:
+```
+@Test
+public void shouldBeAbleRunCypher() throws StubServer.ForceKilled, InterruptedException, IOException
+{
+    // Given
+    StubServer server = StubServer.start( "/path/to/resources/return_x.script", 7687 );
+    URI uri = URI.create( "bolt://localhost:7687" );
+    int x;
+
+    // When
+    try ( Driver driver = GraphDatabase.driver( uri ) )
+    {
+        try ( Session session = driver.session() )
+        {
+            Record record = session.run( "RETURN {x}", parameters( "x", 1 ) ).single();
+            x = record.get( 0 ).asInt();
+        }
+    }
+
+    // Then
+    assertThat( x, equalTo( 1 ) );
+
+    // Finally
+    assertThat( server.exitStatus(), equalTo( 0 ) );
+}
 ```
