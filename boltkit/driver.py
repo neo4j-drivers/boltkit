@@ -142,8 +142,11 @@ def h(data):
         >>> h(b"\x03A~")
         '03:41:7E'
 
-    :param data: input byte data as `bytes` or a `bytearray`
-    :return: textual representation of the input data
+    Args:
+        data: Input byte data as `bytes` or a `bytearray`.
+
+    Returns:
+        A textual representation of the input data.
     """
     return ":".join("{:02X}".format(b) for b in bytearray(data))
 
@@ -195,8 +198,11 @@ def packed(*values):
         XX  XX XX  XX XX XX XX .. .. .. XX
 
 
-    :param values: series of values to pack
-    :return: `bytes` serialisation of the packed values
+    Args:
+        values: Series of values to pack.
+
+    Returns:
+        Byte representation of values.
     """
 
     # First, let's define somewhere to collect the individual byte pieces and grab a couple of
@@ -581,13 +587,31 @@ def unpacked(data, offset=0):
     return next(Packed(data, offset).unpack())
 
 
-# CHAPTER 2: BOLT CONNECTIONS
-# ===========================
+# CHAPTER 2: CONNECTIONS
+# ======================
 # It's here that we get properly into the protocol. A Bolt connection operates under a
 # client-server model whereby a client sends requests to a server and the server responds
 # accordingly. There is no mechanism for a server to send a message at any other time, nor should
 # client software receive data when no message is expected.
 
+# Connection API Compliance
+# -------------------------
+# To construct a compatible Connection API, the following function and classes (or their idiomatic
+# equivalents) should be implemented. Further details for each of these are given in the reference
+# implementations that follow below.
+#
+# connect(address, connection_settings) -> Connection   // Establish a connection to a Bolt server.
+# ConnectionSettings(user, password, user_agent)        // Holder for connection settings.
+# Connection(socket, connection_settings)               // Active connection to a Bolt server.
+# Request(description, *message)                        // Client request message.
+# Response()                                            // Basic response handler.
+#   QueryResponse()                                     // Query response handler.
+#     QueryStreamResponse()                             // Data stream response handler.
+# Failure()                                             // Exception signalling request failure.
+# ProtocolError()                                       // Exception signalling protocol breakdown.
+
+# The Handshake
+# -------------
 # On successfully establishing a TCP connection to a listening server, the client should send a
 # fixed sequence of four bytes in order to declare to the server that it intends to speak Bolt.
 #
@@ -617,6 +641,8 @@ BOLT = b"\x60\x60\xB0\x17"
 BOLT_VERSION = 1
 RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in [BOLT_VERSION, 0, 0, 0])
 
+# Messaging
+# ---------
 # Once we've negotiated the (one and only) protocol version, we fall into the regular protocol
 # exchange. This consists of request and response messages, each of which is serialised as a
 # PackStream structure with a unique signature byte.
@@ -658,6 +684,9 @@ CLIENT = {
                                 # -> FAILURE - statement not accepted
                                 # -> IGNORED - request ignored (due to prior failure)
                                 #
+                                # RUN is used to execute a Cypher statement and is paired with
+                                # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
+                                # results respectively.
                                 # TODO
 
     "DISCARD_ALL": 0x2F,        # DISCARD_ALL
@@ -690,22 +719,21 @@ MAX_CHUNK_SIZE = 65535
 log = getLogger("boltkit.connection")
 
 
-# Connection API:
-#
-# - connect(address, connection_settings) -> Connection
-# - ConnectionSettings(user, password, user_agent)
-# - Connection(socket, connection_settings)
-# - Request(description, *message)
-# - Response()
-#   - QueryResponse()
-#     - QueryStreamResponse()
-# - Failure()
-# - ProtocolError()
-
-
 def connect(address, connection_settings):
-    """ Connect and perform a handshake in order to return a valid
-    Connection object, assuming a protocol version can be agreed.
+    """ Establish a connection to a Bolt server. It is here that we create a low-level socket
+    connection and carry out version negotiation. Following this (and assuming success) a
+    Connection instance will be returned.  This Connection takes ownership of the underlying
+    socket and is subsequently responsible for managing its lifecycle.
+
+    Args:
+        address: A tuple of host and port, such as ("127.0.0.1", 7687).
+        connection_settings: Settings for initialising the connection once established.
+
+    Returns:
+        A connection to the Bolt server.
+
+    Raises:
+        ProtocolError: if the protocol version could not be negotiated.
     """
 
     # Establish a connection to the host and port specified
@@ -727,9 +755,9 @@ def connect(address, connection_settings):
     if version == BOLT_VERSION:
         return Connection(socket, connection_settings)
     else:
-        log.info("~~ <CLOSE> Could not negotiate protocol version")
+        log.error("~~ <CLOSE> Could not negotiate protocol version")
         socket.close()
-        raise RuntimeError("Could not negotiate protocol version")
+        raise ProtocolError("Could not negotiate protocol version")
 
 
 class ConnectionSettings(object):
