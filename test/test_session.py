@@ -29,7 +29,7 @@ class DriverTestCase(TestCase):
 
     port = 7687
     address = ("127.0.0.1", port)
-    script = path_join(dirname(__file__), "scripts", "connect.script")
+    script = path_join(dirname(__file__), "scripts", "connect.bolt")
     timeout = 5
 
     def setUp(self):
