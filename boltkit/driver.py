@@ -945,6 +945,10 @@ class ProtocolError(Exception):
 # CHAPTER 3: SESSION API
 # ======================
 
+# TODO: Transaction
+# TODO: Node
+# TODO: Relationship
+# TODO: Path
 
 class ConnectionPool(object):
 
