@@ -1033,6 +1033,9 @@ class Session(object):
     def run(self, statement, parameters=None):
         return Result(self.connection, statement, parameters or {})
 
+    def reset(self):
+        self.connection.reset()
+
     def close(self):
         if self.connection:
             self.connection_pool.release(self.connection)
