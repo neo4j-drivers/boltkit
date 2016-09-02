@@ -713,6 +713,7 @@ SERVER = {
     "FAILURE": 0x7F,            # FAILURE <metadata>
 }
 
+DEFAULT_USER_AGENT = "boltkit/0.0"
 MAX_CHUNK_SIZE = 65535
 
 
@@ -765,7 +766,7 @@ class ConnectionSettings(object):
     def __init__(self, user, password, user_agent=None):
         self.user = user
         auth_token = {"scheme": "basic", "principal": user, "credentials": password}
-        self.user_agent = user_agent
+        self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.init_request = Request("INIT ...", CLIENT["INIT"], user_agent, auth_token)
 
 
@@ -854,6 +855,44 @@ class Connection(object):
     def close(self):
         log.info("~~ <CLOSE>")
         self.socket.close()
+
+
+class ConnectionPool(object):
+
+    connections = None
+
+    def __init__(self, address, connection_settings):
+        self.address = address
+        self.connection_settings = connection_settings
+        self.connections = set()
+
+    def __del__(self):
+        self.close()
+
+    def acquire(self):
+        """ Acquire connection from pool
+        """
+        try:
+            connection = self.connections.pop()
+        except KeyError:
+            connection = connect(self.address, self.connection_settings)
+        return connection
+
+    def release(self, connection):
+        """ Release connection back into pool.
+        """
+        if connection not in self.connections:
+            try:
+                connection.reset()
+            except Failure:
+                connection.close()
+                raise ProtocolError("Failed to reset connection")
+            else:
+                self.connections.add(connection)
+
+    def close(self):
+        while self.connections:
+            self.connections.pop().close()
 
 
 class Request(object):
@@ -949,43 +988,6 @@ class ProtocolError(Exception):
 # TODO: Node
 # TODO: Relationship
 # TODO: Path
-
-class ConnectionPool(object):
-
-    connections = None
-
-    def __init__(self, address, connection_settings):
-        self.address = address
-        self.connection_settings = connection_settings
-        self.connections = set()
-
-    def __del__(self):
-        self.close()
-
-    def acquire(self):
-        """ Acquire connection from pool
-        """
-        try:
-            connection = self.connections.pop()
-        except KeyError:
-            connection = connect(self.address, self.connection_settings)
-        return connection
-
-    def release(self, connection):
-        """ Release connection back into pool.
-        """
-        if connection not in self.connections:
-            try:
-                connection.reset()
-            except Failure:
-                connection.close()
-                raise ProtocolError("Failed to reset connection")
-            else:
-                self.connections.add(connection)
-
-    def close(self):
-        while self.connections:
-            self.connections.pop().close()
 
 
 class Driver(object):
