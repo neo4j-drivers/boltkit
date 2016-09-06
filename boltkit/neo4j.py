@@ -18,19 +18,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from base64 import b64encode
 from hashlib import sha256
-from json import dumps as json_dumps, loads as json_loads
+from json import loads as json_loads
 from os import getenv, makedirs
 from os.path import join as path_join, normpath
 import platform
 from random import randint
-from shutil import rmtree
 from socket import create_connection
 from subprocess import check_output
 from sys import stderr, stdin
-from tempfile import mkdtemp
 from time import sleep
 try:
     from urllib.request import urlopen, Request, HTTPError
@@ -40,7 +38,7 @@ except ImportError:
     from urlparse import urlparse
 
 
-NEO4J_DIST_ADDRESS = "dist.neo4j.org"
+DIST_HOST = "dist.neo4j.org"
 
 
 class Downloader(object):
@@ -53,10 +51,12 @@ class Downloader(object):
         if self.verbose:
             stderr.write(message)
 
-    def download_build(self, address, build_id, package, user, password):
+    def download_build(self, address, build_id, package):
         """ Download from TeamCity build server.
         """
         url = "https://%s/repository/download/%s/.lastSuccessful/%s" % (address, build_id, package)
+        user = getenv("TEAMCITY_USER")
+        password = getenv("TEAMCITY_PASSWORD")
         auth_token = b"Basic " + b64encode(("%s:%s" % (user, password)).encode("iso-8859-1"))
         request = Request(url, headers={"Authorization": auth_token})
         package_path = path_join(self.path, package)
@@ -120,15 +120,12 @@ class Downloader(object):
             raise ValueError("Unknown format %r" % package_format)
         package = template % (edition, package_version, package_format)
 
-        dist_address = getenv("NEO4J_DIST_ADDRESS", NEO4J_DIST_ADDRESS)
-        build_address = getenv("NEO4J_BUILD_ADDRESS")
+        dist_address = getenv("DIST_HOST", DIST_HOST)
+        build_address = getenv("TEAMCITY_HOST")
         if build_address:
             try:
                 build_id = "Neo4j%s%s_Packaging" % (major, minor)
-                build_user = getenv("NEO4J_BUILD_USER")
-                build_password = getenv("NEO4J_BUILD_PASSWORD")
-                package = self.download_build(build_address, build_id, package,
-                                              build_user, build_password)
+                package = self.download_build(build_address, build_id, package)
             except HTTPError:
                 package = self.download_dist(dist_address, package)
         else:
@@ -181,21 +178,15 @@ def user_record(user, password):
 class Unix(object):
 
     @classmethod
-    def download(cls, edition, version, work_dir, **kwargs):
-        work_dir = mkdtemp() if work_dir is None else normpath(work_dir)
-        downloader = Downloader(work_dir, verbose=kwargs.get("verbose"))
-        package = downloader.download(edition, version, "unix.tar.gz")
-        return package
+    def download(cls, edition, version, path, **kwargs):
+        downloader = Downloader(normpath(path), verbose=kwargs.get("verbose"))
+        return downloader.download(edition, version, "unix.tar.gz")
 
     @classmethod
-    def install(cls, edition, version, work_dir, **kwargs):
-        package = cls.download(edition, version, work_dir, **kwargs)
-        home = untar(package, work_dir)
+    def install(cls, edition, version, path, **kwargs):
+        package = cls.download(edition, version, path, **kwargs)
+        home = untar(package, path)
         return home
-
-    @classmethod
-    def uninstall(cls, home, **kwargs):
-        rmtree(normpath(path_join(home, "..")))
 
     @classmethod
     def start(cls, home, **kwargs):
@@ -231,21 +222,15 @@ class Unix(object):
 class Windows(object):
 
     @classmethod
-    def download(cls, edition, version, work_dir, **kwargs):
-        work_dir = mkdtemp() if work_dir is None else normpath(work_dir)
-        downloader = Downloader(work_dir, verbose=kwargs.get("verbose"))
-        package = downloader.download(edition, version, "windows.zip")
-        return package
+    def download(cls, edition, version, path, **kwargs):
+        downloader = Downloader(normpath(path), verbose=kwargs.get("verbose"))
+        return downloader.download(edition, version, "windows.zip")
 
     @classmethod
-    def install(cls, edition, version, work_dir, **kwargs):
-        package = cls.download(edition, version, work_dir, **kwargs)
-        home = unzip(package, work_dir)
+    def install(cls, edition, version, path, **kwargs):
+        package = cls.download(edition, version, path, **kwargs)
+        home = unzip(package, path)
         return home
-
-    @classmethod
-    def uninstall(cls, home, **kwargs):
-        rmtree(normpath(path_join(home, "..")))
 
     @classmethod
     def start(cls, home, **kwargs):
@@ -261,27 +246,45 @@ class Windows(object):
 
 
 def usage():
-    print("usage: neotest-download <version> <work_dir>")
-    print("       neotest-install <version> <work_dir>")
-    print("       neotest-uninstall <home>")
-    print("       neotest-start <home>")
-    print("       neotest-stop <home>")
-    print("       neotest-create-user <home> <user> <password>")
+    print("usage: neotest-download [-h] [-e] [-v] version [path]")
+    print("       neotest-install [-h] [-e] [-v] version [path]")
+    print("       neotest-start [-h] [-v] home")
+    print("       neotest-stop [-h] [-v] home")
+    print("       neotest-create-user [-h] [-v] home user password")
 
 
 def download():
-    parser = ArgumentParser()
-    parser.add_argument("-e", "--enterprise", action="store_true")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("version")
-    parser.add_argument("work_dir", default=None)
+    parser = ArgumentParser(
+        description="Download a Neo4j server package for the current platform.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neotest-download -e 3.1.0-M09 $HOME/servers/",
+        epilog="environment variables:\r\n"
+               "  DIST_HOST         name of distribution server (default: %s)\r\n"
+               "  TEAMCITY_HOST     name of build server (optional)\r\n"
+               "  TEAMCITY_USER     build server user name (optional)\r\n"
+               "  TEAMCITY_PASSWORD build server password (optional)\r\n"
+               "\r\n"
+               "If TEAMCITY_* environment variables are set, the build server will be checked\r\n"
+               "for the package before the distribution server. Note that supplying a local\r\n"
+               "alternative DIST_HOST can help reduce test timings on a slow network.\r\n"
+               "\r\n"
+               "Report bugs to drivers@neo4j.com" % (DIST_HOST,),
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-e", "--enterprise", action="store_true",
+                        help="select Neo4j Enterprise Edition (default: Community)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("version", help="Neo4j server version")
+    parser.add_argument("path", nargs="?", default=".",
+                        help="download destination path (default: .)")
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
     try:
         if platform.system() == "Windows":
-            home = Windows.download(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
+            home = Windows.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
         else:
-            home = Unix.download(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
+            home = Unix.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
     except HTTPError as error:
         if error.code == 401:
             stderr.write("ERROR: Missing or incorrect authorization\r\n")
@@ -297,18 +300,29 @@ def download():
 
 
 def install():
-    parser = ArgumentParser()
-    parser.add_argument("-e", "--enterprise", action="store_true")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("version")
-    parser.add_argument("work_dir", default=None)
+    parser = ArgumentParser(
+        description="Download and extract a Neo4j server package for the current platform.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neotest-install -e 3.1.0-M09 $HOME/servers/",
+        epilog="See neotest-download for details of supported environment variables.\r\n"
+               "\r\n"
+               "Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-e", "--enterprise", action="store_true",
+                        help="select Neo4j Enterprise Edition (default: Community)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("version", help="Neo4j server version")
+    parser.add_argument("path", nargs="?", default=".",
+                        help="download destination path (default: .)")
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
     try:
         if platform.system() == "Windows":
-            home = Windows.install(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
+            home = Windows.install(edition, parsed.version, parsed.path, verbose=parsed.verbose)
         else:
-            home = Unix.install(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
+            home = Unix.install(edition, parsed.version, parsed.path, verbose=parsed.verbose)
     except HTTPError as error:
         if error.code == 401:
             stderr.write("ERROR: Missing or incorrect authorization\r\n")
@@ -323,21 +337,17 @@ def install():
         print(home)
 
 
-def uninstall():
-    parser = ArgumentParser()
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("home")
-    parsed = parser.parse_args()
-    if platform.system() == "Windows":
-        Windows.uninstall(parsed.home, verbose=parsed.verbose)
-    else:
-        Unix.uninstall(parsed.home, verbose=parsed.verbose)
-
-
 def start():
-    parser = ArgumentParser()
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("home")
+    parser = ArgumentParser(
+        description="Start an installed Neo4j server instance.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neotest-start $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("home", help="Neo4j server directory")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
         http_uri = Windows.start(parsed.home, verbose=parsed.verbose)
@@ -355,9 +365,16 @@ def start():
 
 
 def stop():
-    parser = ArgumentParser()
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("home")
+    parser = ArgumentParser(
+        description="Stop an installed Neo4j server instance.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neotest-stop $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("home", help="Neo4j server directory")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
         Windows.stop(parsed.home, verbose=parsed.verbose)
@@ -366,11 +383,18 @@ def stop():
 
 
 def create_user():
-    parser = ArgumentParser()
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("home")
-    parser.add_argument("user")
-    parser.add_argument("password")
+    parser = ArgumentParser(
+        description="Create a new Neo4j user.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neotest-create-user $HOME/servers/neo4j-community-3.0.0 bob s3cr3t",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("home", help="Neo4j server directory")
+    parser.add_argument("user", help="name of new user")
+    parser.add_argument("password", help="password for new user")
     parsed = parser.parse_args()
     user = parsed.user.encode(stdin.encoding or "utf-8")
     password = parsed.password.encode(stdin.encoding or "utf-8")
