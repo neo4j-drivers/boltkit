@@ -20,13 +20,16 @@
 
 from argparse import ArgumentParser
 from base64 import b64encode
-from os import getenv
+from hashlib import sha256
+from json import dumps as json_dumps, loads as json_loads
+from os import getenv, makedirs
 from os.path import join as path_join, normpath
 import platform
+from random import randint
 from shutil import rmtree
 from socket import create_connection
 from subprocess import check_output
-from sys import stderr
+from sys import stderr, stdin
 from tempfile import mkdtemp
 from time import sleep
 try:
@@ -163,66 +166,129 @@ def wait_for_server(host, port, timeout=30):
             running = True
 
 
-def start_unix(edition, version, **kwargs):
-    work_dir = mkdtemp()
-    download = Downloader(work_dir, verbose=kwargs.get("verbose")).download
-    package = download(edition, version, "unix.tar.gz")
-    home = untar(package, work_dir)
-    out = check_output([path_join(home, "bin", "neo4j"), "start"])
-    url = None
-    for line in out.splitlines():
-        http = line.find(b"http:")
-        if http >= 0:
-            url = urlparse(line[http:].split()[0].strip())
-    if not url:
-        raise RuntimeError("Cannot ascertain server address")
-    wait_for_server(url.hostname, url.port)
-    return home
+def hex_bytes(data):
+    return b"".join(b"%02X" % b for b in bytearray(data))
 
 
-def stop_unix(home, verbose=False):
-    check_output([path_join(home, "bin", "neo4j"), "stop"])
+def user_record(user, password):
+    salt = bytearray(randint(0x00, 0xFF) for _ in range(16))
+    m = sha256()
+    m.update(salt)
+    m.update(password)
+    return b"%s:SHA-256,%s,%s:" % (user, hex_bytes(m.digest()), hex_bytes(salt))
 
 
-def start_windows(edition, version, **kwargs):
-    work_dir = mkdtemp()
-    download = Downloader(work_dir, verbose=kwargs.get("verbose")).download
-    package = download(edition, version, "windows.zip")
-    home = unzip(package, work_dir)
-    raise NotImplementedError("Windows support not complete")
-    return home
+class Unix(object):
+
+    @classmethod
+    def download(cls, edition, version, work_dir, **kwargs):
+        work_dir = mkdtemp() if work_dir is None else normpath(work_dir)
+        downloader = Downloader(work_dir, verbose=kwargs.get("verbose"))
+        package = downloader.download(edition, version, "unix.tar.gz")
+        return package
+
+    @classmethod
+    def install(cls, edition, version, work_dir, **kwargs):
+        package = cls.download(edition, version, work_dir, **kwargs)
+        home = untar(package, work_dir)
+        return home
+
+    @classmethod
+    def uninstall(cls, home, **kwargs):
+        rmtree(normpath(path_join(home, "..")))
+
+    @classmethod
+    def start(cls, home, **kwargs):
+        out = check_output([path_join(home, "bin", "neo4j"), "start"])
+        uri = None
+        parsed_uri = None
+        for line in out.splitlines():
+            http = line.find(b"http:")
+            if http >= 0:
+                uri = line[http:].split()[0].strip()
+                parsed_uri = urlparse(uri)
+        if not parsed_uri:
+            raise RuntimeError("Cannot ascertain server address")
+        wait_for_server(parsed_uri.hostname, parsed_uri.port)
+        return uri.decode("iso-8859-1")
+
+    @classmethod
+    def stop(cls, home, **kwargs):
+        check_output([path_join(home, "bin", "neo4j"), "stop"])
+
+    @classmethod
+    def create_user(cls, home, user, password, **kwargs):
+        data_dbms = path_join(home, "data", "dbms")
+        try:
+            makedirs(data_dbms)
+        except OSError:
+            pass
+        with open(path_join(data_dbms, "auth"), "a") as f:
+            f.write(user_record(user, password))
+            f.write(b"\r\n")
 
 
-def stop_windows(home, verbose=False):
-    raise NotImplementedError("Windows support not complete")
+class Windows(object):
+
+    @classmethod
+    def download(cls, edition, version, work_dir, **kwargs):
+        work_dir = mkdtemp() if work_dir is None else normpath(work_dir)
+        downloader = Downloader(work_dir, verbose=kwargs.get("verbose"))
+        package = downloader.download(edition, version, "windows.zip")
+        return package
+
+    @classmethod
+    def install(cls, edition, version, work_dir, **kwargs):
+        package = cls.download(edition, version, work_dir, **kwargs)
+        home = unzip(package, work_dir)
+        return home
+
+    @classmethod
+    def uninstall(cls, home, **kwargs):
+        rmtree(normpath(path_join(home, "..")))
+
+    @classmethod
+    def start(cls, home, **kwargs):
+        raise NotImplementedError("Windows support not complete")
+
+    @classmethod
+    def stop(cls, home, verbose=False):
+        raise NotImplementedError("Windows support not complete")
+
+    @classmethod
+    def create_user(cls, home, user, password, **kwargs):
+        raise NotImplementedError("Windows support not complete")
 
 
 def usage():
-    print("usage: neo4j-runner start <version>")
-    print("       neo4j-runner stop <home>")
+    print("usage: neotest-download <version> <work_dir>")
+    print("       neotest-install <version> <work_dir>")
+    print("       neotest-uninstall <home>")
+    print("       neotest-start <home>")
+    print("       neotest-stop <home>")
+    print("       neotest-create-user <home> <user> <password>")
 
 
-# TODO: install, uninstall, start, stop
-
-def start():
+def download():
     parser = ArgumentParser()
     parser.add_argument("-e", "--enterprise", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("version")
+    parser.add_argument("work_dir", default=None)
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
     try:
         if platform.system() == "Windows":
-            home = start_windows(edition, parsed.version, verbose=parsed.verbose)
+            home = Windows.download(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
         else:
-            home = start_unix(edition, parsed.version, verbose=parsed.verbose)
+            home = Unix.download(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
     except HTTPError as error:
         if error.code == 401:
             stderr.write("ERROR: Missing or incorrect authorization\r\n")
             exit(1)
         elif error.code == 403:
-            stderr.write("ERROR: Could not download package from http:%s "
-                         "(403 Forbidden)\r\n" % error.args[0])
+            stderr.write("ERROR: Could not download package from %s "
+                         "(403 Forbidden)\r\n" % error.url)
             exit(1)
         else:
             raise
@@ -230,15 +296,85 @@ def start():
         print(home)
 
 
-def stop():
+def install():
     parser = ArgumentParser()
-    parser.add_argument("-d", "--delete-parent-dir", action="store_true")
+    parser.add_argument("-e", "--enterprise", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("version")
+    parser.add_argument("work_dir", default=None)
+    parsed = parser.parse_args()
+    edition = "enterprise" if parsed.enterprise else "community"
+    try:
+        if platform.system() == "Windows":
+            home = Windows.install(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
+        else:
+            home = Unix.install(edition, parsed.version, parsed.work_dir, verbose=parsed.verbose)
+    except HTTPError as error:
+        if error.code == 401:
+            stderr.write("ERROR: Missing or incorrect authorization\r\n")
+            exit(1)
+        elif error.code == 403:
+            stderr.write("ERROR: Could not download package from %s "
+                         "(403 Forbidden)\r\n" % error.url)
+            exit(1)
+        else:
+            raise
+    else:
+        print(home)
+
+
+def uninstall():
+    parser = ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("home")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
-        stop_windows(parsed.home, verbose=parsed.verbose)
+        Windows.uninstall(parsed.home, verbose=parsed.verbose)
     else:
-        stop_unix(parsed.home, verbose=parsed.verbose)
-    if parsed.delete_parent_dir:
-        rmtree(normpath(path_join(parsed.home, "..")))
+        Unix.uninstall(parsed.home, verbose=parsed.verbose)
+
+
+def start():
+    parser = ArgumentParser()
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("home")
+    parsed = parser.parse_args()
+    if platform.system() == "Windows":
+        http_uri = Windows.start(parsed.home, verbose=parsed.verbose)
+    else:
+        http_uri = Unix.start(parsed.home, verbose=parsed.verbose)
+    if http_uri:
+        f = urlopen(http_uri)
+        try:
+            data = f.read()
+        finally:
+            f.close()
+        uris = json_loads(data.decode("utf-8"))
+        bolt_uri = uris["bolt"]
+        print("%s %s" % (http_uri, bolt_uri))
+
+
+def stop():
+    parser = ArgumentParser()
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("home")
+    parsed = parser.parse_args()
+    if platform.system() == "Windows":
+        Windows.stop(parsed.home, verbose=parsed.verbose)
+    else:
+        Unix.stop(parsed.home, verbose=parsed.verbose)
+
+
+def create_user():
+    parser = ArgumentParser()
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("home")
+    parser.add_argument("user")
+    parser.add_argument("password")
+    parsed = parser.parse_args()
+    user = parsed.user.encode(stdin.encoding or "utf-8")
+    password = parsed.password.encode(stdin.encoding or "utf-8")
+    if platform.system() == "Windows":
+        Windows.create_user(parsed.home, user, password, verbose=parsed.verbose)
+    else:
+        Unix.create_user(parsed.home, user, password, verbose=parsed.verbose)

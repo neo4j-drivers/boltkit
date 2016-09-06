@@ -35,8 +35,12 @@ package_metadata = {
         "console_scripts": [
             "boltrun = boltkit.runner:run",
             "boltstub = boltkit.server:stub",
+            "neotest-download = boltkit.neo4j:download",
+            "neotest-install = boltkit.neo4j:install",
+            "neotest-uninstall = boltkit.neo4j:uninstall",
             "neotest-start = boltkit.neo4j:start",
             "neotest-stop = boltkit.neo4j:stop",
+            "neotest-create-user = boltkit.neo4j:create_user",
         ],
     },
     "packages": packages,
