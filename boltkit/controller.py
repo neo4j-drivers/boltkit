@@ -175,22 +175,46 @@ def user_record(user, password):
     return b"%s:SHA-256,%s,%s:" % (user, hex_bytes(m.digest()), hex_bytes(salt))
 
 
-class Unix(object):
+class Controller(object):
+
+    package_format = None
+    extractor = None
 
     @classmethod
     def download(cls, edition, version, path, **kwargs):
         downloader = Downloader(normpath(path), verbose=kwargs.get("verbose"))
-        return downloader.download(edition, version, "unix.tar.gz")
+        return downloader.download(edition, version, cls.package_format)
 
     @classmethod
     def install(cls, edition, version, path, **kwargs):
         package = cls.download(edition, version, path, **kwargs)
-        home = untar(package, path)
+        home = cls.extractor(package, path)
         return home
 
-    @classmethod
-    def start(cls, home, **kwargs):
-        out = check_output([path_join(home, "bin", "neo4j"), "start"])
+    def __init__(self, home, verbosity=0):
+        self.home = home
+        self.verbosity = verbosity
+
+    def start(self):
+        raise NotImplementedError("Not yet supported for this platform")
+
+    def stop(self):
+        raise NotImplementedError("Not yet supported for this platform")
+
+    def create_user(self, user, password):
+        raise NotImplementedError("Not yet supported for this platform")
+
+    def configure(self, properties):
+        raise NotImplementedError("Not yet supported for this platform")
+
+
+class UnixController(Controller):
+
+    package_format = "unix.tar.gz"
+    extractor = untar
+
+    def start(self):
+        out = check_output([path_join(self.home, "bin", "neo4j"), "start"])
         uri = None
         parsed_uri = None
         for line in out.splitlines():
@@ -203,13 +227,11 @@ class Unix(object):
         wait_for_server(parsed_uri.hostname, parsed_uri.port)
         return uri.decode("iso-8859-1")
 
-    @classmethod
-    def stop(cls, home, **kwargs):
-        check_output([path_join(home, "bin", "neo4j"), "stop"])
+    def stop(self):
+        check_output([path_join(self.home, "bin", "neo4j"), "stop"])
 
-    @classmethod
-    def create_user(cls, home, user, password, **kwargs):
-        data_dbms = path_join(home, "data", "dbms")
+    def create_user(self, user, password):
+        data_dbms = path_join(self.home, "data", "dbms")
         try:
             makedirs(data_dbms)
         except OSError:
@@ -218,39 +240,37 @@ class Unix(object):
             f.write(user_record(user, password))
             f.write(b"\r\n")
 
+    def configure(self, properties):
+        config_file_path = path_join(self.home, "conf", "neo4j.conf")
+        with open(config_file_path, "r") as f_in:
+            lines = f_in.readlines()
+        with open(config_file_path, "w") as f_out:
+            for line in lines:
+                for key, value in properties.items():
+                    if line.startswith(key + "=") or \
+                            (line.startswith("#") and line[1:].lstrip().startswith(key + "=")):
+                        f_out.write("%s=%s\n" % (key, value))
+                        break
+                else:
+                    f_out.write(line)
 
-class Windows(object):
 
-    @classmethod
-    def download(cls, edition, version, path, **kwargs):
-        downloader = Downloader(normpath(path), verbose=kwargs.get("verbose"))
-        return downloader.download(edition, version, "windows.zip")
+class WindowsController(Controller):
 
-    @classmethod
-    def install(cls, edition, version, path, **kwargs):
-        package = cls.download(edition, version, path, **kwargs)
-        home = unzip(package, path)
-        return home
+    package_format = "windows.zip"
+    extractor = unzip
 
-    @classmethod
-    def start(cls, home, **kwargs):
+    def start(self):
         raise NotImplementedError("Windows support not complete")
 
-    @classmethod
-    def stop(cls, home, verbose=False):
+    def stop(self):
         raise NotImplementedError("Windows support not complete")
 
-    @classmethod
-    def create_user(cls, home, user, password, **kwargs):
+    def create_user(self, user, password):
         raise NotImplementedError("Windows support not complete")
 
-
-def usage():
-    print("usage: neotest-download [-h] [-e] [-v] version [path]")
-    print("       neotest-install [-h] [-e] [-v] version [path]")
-    print("       neotest-start [-h] [-v] home")
-    print("       neotest-stop [-h] [-v] home")
-    print("       neotest-create-user [-h] [-v] home user password")
+    def configure(self, properties):
+        raise NotImplementedError("Windows support not complete")
 
 
 def download():
@@ -258,7 +278,7 @@ def download():
         description="Download a Neo4j server package for the current platform.\r\n"
                     "\r\n"
                     "example:\r\n"
-                    "  neotest-download -e 3.1.0-M09 $HOME/servers/",
+                    "  neoctrl-download -e 3.1.0-M09 $HOME/servers/",
         epilog="environment variables:\r\n"
                "  DIST_HOST         name of distribution server (default: %s)\r\n"
                "  TEAMCITY_HOST     name of build server (optional)\r\n"
@@ -280,11 +300,9 @@ def download():
                         help="download destination path (default: .)")
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
+    controller = WindowsController if platform.system() == "Windows" else UnixController
     try:
-        if platform.system() == "Windows":
-            home = Windows.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
-        else:
-            home = Unix.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
+        home = controller.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
     except HTTPError as error:
         if error.code == 401:
             stderr.write("ERROR: Missing or incorrect authorization\r\n")
@@ -304,8 +322,8 @@ def install():
         description="Download and extract a Neo4j server package for the current platform.\r\n"
                     "\r\n"
                     "example:\r\n"
-                    "  neotest-install -e 3.1.0-M09 $HOME/servers/",
-        epilog="See neotest-download for details of supported environment variables.\r\n"
+                    "  neoctrl-install -e 3.1.0-M09 $HOME/servers/",
+        epilog="See neoctrl-download for details of supported environment variables.\r\n"
                "\r\n"
                "Report bugs to drivers@neo4j.com",
         formatter_class=RawDescriptionHelpFormatter)
@@ -318,11 +336,9 @@ def install():
                         help="download destination path (default: .)")
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
+    controller = WindowsController if platform.system() == "Windows" else UnixController
     try:
-        if platform.system() == "Windows":
-            home = Windows.install(edition, parsed.version, parsed.path, verbose=parsed.verbose)
-        else:
-            home = Unix.install(edition, parsed.version, parsed.path, verbose=parsed.verbose)
+        home = controller.install(edition, parsed.version, parsed.path, verbose=parsed.verbose)
     except HTTPError as error:
         if error.code == 401:
             stderr.write("ERROR: Missing or incorrect authorization\r\n")
@@ -342,17 +358,18 @@ def start():
         description="Start an installed Neo4j server instance.\r\n"
                     "\r\n"
                     "example:\r\n"
-                    "  neotest-start $HOME/servers/neo4j-community-3.0.0",
+                    "  neoctrl-start $HOME/servers/neo4j-community-3.0.0",
         epilog="Report bugs to drivers@neo4j.com",
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
-    parser.add_argument("home", help="Neo4j server directory")
+    parser.add_argument("home", nargs="?", default=".",help="Neo4j server directory (default: .)")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
-        http_uri = Windows.start(parsed.home, verbose=parsed.verbose)
+        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
-        http_uri = Unix.start(parsed.home, verbose=parsed.verbose)
+        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
+    http_uri = controller.start()
     if http_uri:
         f = urlopen(http_uri)
         try:
@@ -361,7 +378,8 @@ def start():
             f.close()
         uris = json_loads(data.decode("utf-8"))
         bolt_uri = uris["bolt"]
-        print("%s %s" % (http_uri, bolt_uri))
+        print(http_uri)
+        print(bolt_uri)
 
 
 def stop():
@@ -369,17 +387,18 @@ def stop():
         description="Stop an installed Neo4j server instance.\r\n"
                     "\r\n"
                     "example:\r\n"
-                    "  neotest-stop $HOME/servers/neo4j-community-3.0.0",
+                    "  neoctrl-stop $HOME/servers/neo4j-community-3.0.0",
         epilog="Report bugs to drivers@neo4j.com",
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
-    parser.add_argument("home", help="Neo4j server directory")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
-        Windows.stop(parsed.home, verbose=parsed.verbose)
+        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
-        Unix.stop(parsed.home, verbose=parsed.verbose)
+        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
+    controller.stop()
 
 
 def create_user():
@@ -387,18 +406,40 @@ def create_user():
         description="Create a new Neo4j user.\r\n"
                     "\r\n"
                     "example:\r\n"
-                    "  neotest-create-user $HOME/servers/neo4j-community-3.0.0 bob s3cr3t",
+                    "  neoctrl-create-user $HOME/servers/neo4j-community-3.0.0 bob s3cr3t",
         epilog="Report bugs to drivers@neo4j.com",
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
-    parser.add_argument("home", help="Neo4j server directory")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
     parser.add_argument("user", help="name of new user")
     parser.add_argument("password", help="password for new user")
     parsed = parser.parse_args()
+    if platform.system() == "Windows":
+        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
+    else:
+        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
     user = parsed.user.encode(stdin.encoding or "utf-8")
     password = parsed.password.encode(stdin.encoding or "utf-8")
+    controller.create_user(user, password)
+
+
+def configure():
+    parser = ArgumentParser(
+        description="Update Neo4j server configuration.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-configure --disable-auth $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
+    parser.add_argument("items", metavar="key=value", nargs="+", help="key/value assignment")
+    parsed = parser.parse_args()
+    properties = dict(item.partition("=")[0::2] for item in parsed.items)
     if platform.system() == "Windows":
-        Windows.create_user(parsed.home, user, password, verbose=parsed.verbose)
+        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
-        Unix.create_user(parsed.home, user, password, verbose=parsed.verbose)
+        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
+    controller.configure(properties)
