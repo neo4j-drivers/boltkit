@@ -22,7 +22,7 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
 ----
 
 
-## Installation <a name="installation">§</a>
+## <a name="installation"></a>Installation
 
 The package can either be installed globally or within a *virtualenv*.
 Installation makes available several command line tools, the names of which all start with either `bolt` or `neoctrl`.
@@ -31,7 +31,7 @@ pip install --upgrade boltkit
 ```
 
 
-## Demo Driver <a name="demo-driver">§</a>
+## <a name="demo-driver"></a>Demo Driver 
 
 - Source: [`boltkit/driver.py`](boltkit/driver.py)
 
@@ -43,7 +43,7 @@ less $(python -c "from boltkit import driver; print(driver.__file__)")
 ```
 
 
-## Statement Runner <a name="statement-runner">§</a>
+## <a name="statement-runner"></a>Statement Runner
 
 - Command: `boltrun <statement>`
 - Source: [`boltkit/runner.py`](boltkit/runner.py)
@@ -54,7 +54,7 @@ boltrun "UNWIND range(1, 10) AS n RETURN n"
 ```
 
 
-## Stub Bolt Server <a name="stub-bolt-server">§</a>
+## <a name="stub-bolt-server"></a>Stub Bolt Server 
 
 - Command: `boltstub <port> <script>`
 - Source: [`boltkit/server.py`](boltkit/server.py)
@@ -71,7 +71,7 @@ When the client closes its connection, the server will shut down.
 If any script lines remain, the server will exit with an error status; if none remain it will exit successfully.
 After 30 seconds of inactivity, the server will time out and shut down with an error status.
 
-### Scripting <a name="stub-bolt-server/scripting">§</a>
+### <a name="stub-bolt-server/scripting"></a>Scripting 
 
 Scripts generally consist of alternating client (`C:`) and server (`S:`) messages.
 Each message line contains the message name followed by its fields, in JSON format.
@@ -92,7 +92,7 @@ S: SUCCESS {"fields": ["x"]}
 ```
 
 
-### Command Line Usage <a name="stub-bolt-server/command-line-usage">§</a>
+### <a name="stub-bolt-server/command-line-usage"></a>Command Line Usage 
 
 To run a stub server script:
 ```
@@ -104,7 +104,7 @@ To run a Cypher command against the stub server:
 boltrun "UNWIND range(1, 10) AS n RETURN n"
 ```
 
-### Java Test Usage <a name="stub-bolt-server/java-test-usage">§</a>
+### <a name="stub-bolt-server/java-test-usage"></a>Java Test Usage 
 
 The stub server can be used from any environment from which command line tools can be executed.
 To use from Java, first construct a wrapper for the server:
@@ -187,10 +187,11 @@ public void shouldBeAbleRunCypher() throws StubServer.ForceKilled, InterruptedEx
 }
 ```
 
-## Neo4j Controller <a name="neo4j-controller">§</a>
+## <a name="neo4j-controller"></a>Neo4j Controller 
 
 The Neo4j controller module comprises a set of scripts for downloading, starting, stopping and configuring Neo4j servers.
-These scripts should work for any 3.0+ server version.
+These scripts should work for any 3.0+ server version and can pull builds from TeamCity if credentials are supplied.
+In this case, the download is attempted from TeamCity first and the regular distribution server is used as a fallback.
 
 ### `neoctrl-download` <a name="neo4j-controller/download">§</a>
 ```
@@ -223,7 +224,7 @@ alternative DIST_HOST can help reduce test timings on a slow network.
 Report bugs to drivers@neo4j.com
 ```
 
-### `neoctrl-install` <a name="neo4j-controller/install">§</a>
+### <a name="neo4j-controller/install"></a>`neoctrl-install` 
 ```
 usage: neoctrl-install [-h] [-e] [-v] version [path]
 
@@ -246,7 +247,7 @@ See neoctrl-download for details of supported environment variables.
 Report bugs to drivers@neo4j.com
 ```
 
-### `neoctrl-start` <a name="neo4j-controller/start">§</a>
+### <a name="neo4j-controller/start"></a>`neoctrl-start` 
 ```
 usage: neoctrl-start [-h] [-v] [home]
 
@@ -265,7 +266,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### `neoctrl-stop` <a name="neo4j-controller/stop">§</a>
+### <a name="neo4j-controller/stop"></a>`neoctrl-stop` 
 ```
 usage: neoctrl-stop [-h] [-v] [home]
 
@@ -284,7 +285,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### `neoctrl-create-user` <a name="neo4j-controller/create-user">§</a>
+### <a name="neo4j-controller/create-user"></a>`neoctrl-create-user` 
 ```
 usage: neoctrl-create-user [-h] [-v] [home] user password
 
@@ -305,7 +306,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### `neoctrl-configure` <a name="neo4j-controller/configure">§</a>
+### <a name="neo4j-controller/configure"></a>`neoctrl-configure` 
 ```
 usage: neoctrl-configure [-h] [-v] [home] key=value [key=value ...]
 
