@@ -429,7 +429,7 @@ def configure():
         description="Update Neo4j server configuration.\r\n"
                     "\r\n"
                     "example:\r\n"
-                    "  neoctrl-configure --disable-auth $HOME/servers/neo4j-community-3.0.0",
+                    "  neoctrl-configure . dbms.security.auth_enabled=false",
         epilog="Report bugs to drivers@neo4j.com",
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",

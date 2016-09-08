@@ -2,17 +2,36 @@
 
 Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
 
+**Contents**
 
-## Installation
+- [Installation](#installation)
+- [Demo Driver](#demo-driver)
+- [Statement Runner](#statement-runner)
+- [Stub Bolt Server](#stub-bolt-server)
+  - [Scripting](#stub-bolt-server/scripting)
+  - [Command Line Usage](#stub-bolt-server/command-line-usage)
+  - [Java Test Usage](#stub-bolt-server/java-test-usage)
+- [Neo4j Controller](#neo4j-controller)
+  - [`neoctrl-download`](#neo4j-controller/download)
+  - [`neoctrl-install`](#neo4j-controller/install)
+  - [`neoctrl-start`](#neo4j-controller/start)
+  - [`neoctrl-stop`](#neo4j-controller/stop)
+  - [`neoctrl-create-user`](#neo4j-controller/create-user)
+  - [`neoctrl-configure`](#neo4j-controller/configure)
+
+----
+
+
+## Installation <a name="installation">§</a>
 
 The package can either be installed globally or within a *virtualenv*.
-Installation makes available several command line tools, the names of which all start with `bolt`.
+Installation makes available several command line tools, the names of which all start with either `bolt` or `neoctrl`.
 ```
-pip install boltkit
+pip install --upgrade boltkit
 ```
 
 
-## Demo Driver
+## Demo Driver <a name="demo-driver">§</a>
 
 - Source: [`boltkit/driver.py`](boltkit/driver.py)
 
@@ -24,7 +43,7 @@ less $(python -c "from boltkit import driver; print(driver.__file__)")
 ```
 
 
-## Statement Runner
+## Statement Runner <a name="statement-runner">§</a>
 
 - Command: `boltrun <statement>`
 - Source: [`boltkit/runner.py`](boltkit/runner.py)
@@ -35,7 +54,7 @@ boltrun "UNWIND range(1, 10) AS n RETURN n"
 ```
 
 
-## Stub Bolt Server
+## Stub Bolt Server <a name="stub-bolt-server">§</a>
 
 - Command: `boltstub <port> <script>`
 - Source: [`boltkit/server.py`](boltkit/server.py)
@@ -52,7 +71,7 @@ When the client closes its connection, the server will shut down.
 If any script lines remain, the server will exit with an error status; if none remain it will exit successfully.
 After 30 seconds of inactivity, the server will time out and shut down with an error status.
 
-### Scripting
+### Scripting <a name="stub-bolt-server/scripting">§</a>
 
 Scripts generally consist of alternating client (`C:`) and server (`S:`) messages.
 Each message line contains the message name followed by its fields, in JSON format.
@@ -73,7 +92,7 @@ S: SUCCESS {"fields": ["x"]}
 ```
 
 
-### Command Line Usage
+### Command Line Usage <a name="stub-bolt-server/command-line-usage">§</a>
 
 To run a stub server script:
 ```
@@ -85,7 +104,7 @@ To run a Cypher command against the stub server:
 boltrun "UNWIND range(1, 10) AS n RETURN n"
 ```
 
-### Java Test Usage
+### Java Test Usage <a name="stub-bolt-server/java-test-usage">§</a>
 
 The stub server can be used from any environment from which command line tools can be executed.
 To use from Java, first construct a wrapper for the server:
@@ -166,4 +185,142 @@ public void shouldBeAbleRunCypher() throws StubServer.ForceKilled, InterruptedEx
     // Finally
     assertThat( server.exitStatus(), equalTo( 0 ) );
 }
+```
+
+## Neo4j Controller <a name="neo4j-controller">§</a>
+
+The Neo4j controller module comprises a set of scripts for downloading, starting, stopping and configuring Neo4j servers.
+These scripts should work for any 3.0+ server version.
+
+### `neoctrl-download` <a name="neo4j-controller/download">§</a>
+```
+usage: neoctrl-download [-h] [-e] [-v] version [path]
+
+Download a Neo4j server package for the current platform.
+
+example:
+  neoctrl-download -e 3.1.0-M09 $HOME/servers/
+
+positional arguments:
+  version           Neo4j server version
+  path              download destination path (default: .)
+
+optional arguments:
+  -h, --help        show this help message and exit
+  -e, --enterprise  select Neo4j Enterprise Edition (default: Community)
+  -v, --verbose     show more detailed output
+
+environment variables:
+  DIST_HOST         name of distribution server (default: dist.neo4j.org)
+  TEAMCITY_HOST     name of build server (optional)
+  TEAMCITY_USER     build server user name (optional)
+  TEAMCITY_PASSWORD build server password (optional)
+
+If TEAMCITY_* environment variables are set, the build server will be checked
+for the package before the distribution server. Note that supplying a local
+alternative DIST_HOST can help reduce test timings on a slow network.
+
+Report bugs to drivers@neo4j.com
+```
+
+### `neoctrl-install` <a name="neo4j-controller/install">§</a>
+```
+usage: neoctrl-install [-h] [-e] [-v] version [path]
+
+Download and extract a Neo4j server package for the current platform.
+
+example:
+  neoctrl-install -e 3.1.0-M09 $HOME/servers/
+
+positional arguments:
+  version           Neo4j server version
+  path              download destination path (default: .)
+
+optional arguments:
+  -h, --help        show this help message and exit
+  -e, --enterprise  select Neo4j Enterprise Edition (default: Community)
+  -v, --verbose     show more detailed output
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
+### `neoctrl-start` <a name="neo4j-controller/start">§</a>
+```
+usage: neoctrl-start [-h] [-v] [home]
+
+Start an installed Neo4j server instance.
+
+example:
+  neoctrl-start $HOME/servers/neo4j-community-3.0.0
+
+positional arguments:
+  home           Neo4j server directory (default: .)
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
+
+Report bugs to drivers@neo4j.com
+```
+
+### `neoctrl-stop` <a name="neo4j-controller/stop">§</a>
+```
+usage: neoctrl-stop [-h] [-v] [home]
+
+Stop an installed Neo4j server instance.
+
+example:
+  neoctrl-stop $HOME/servers/neo4j-community-3.0.0
+
+positional arguments:
+  home           Neo4j server directory (default: .)
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
+
+Report bugs to drivers@neo4j.com
+```
+
+### `neoctrl-create-user` <a name="neo4j-controller/create-user">§</a>
+```
+usage: neoctrl-create-user [-h] [-v] [home] user password
+
+Create a new Neo4j user.
+
+example:
+  neoctrl-create-user $HOME/servers/neo4j-community-3.0.0 bob s3cr3t
+
+positional arguments:
+  home           Neo4j server directory (default: .)
+  user           name of new user
+  password       password for new user
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
+
+Report bugs to drivers@neo4j.com
+```
+
+### `neoctrl-configure` <a name="neo4j-controller/configure">§</a>
+```
+usage: neoctrl-configure [-h] [-v] [home] key=value [key=value ...]
+
+Update Neo4j server configuration.
+
+example:
+  neoctrl-configure --disable-auth $HOME/servers/neo4j-community-3.0.0
+
+positional arguments:
+  home           Neo4j server directory (default: .)
+  key=value      key/value assignment
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
+
+Report bugs to drivers@neo4j.com
 ```
