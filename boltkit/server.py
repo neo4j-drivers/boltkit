@@ -59,7 +59,11 @@ class Peer(object):
         self.version = 0
 
 
-class Line(object):
+class Item(object):
+    pass
+
+
+class Line(Item):
 
     def __init__(self, line_no, peer, message):
         self.line_no = line_no
@@ -68,6 +72,11 @@ class Line(object):
 
     def __repr__(self):
         return "%s: %s" % (self.peer, message_repr(*self.message))
+
+
+class ExitCommand(Item):
+
+    pass
 
 
 class Script(object):
@@ -107,6 +116,13 @@ class Script(object):
                 data = data[end:]
         return parsed
 
+    def parse_command(self, message):
+        tag, _, data = message.partition(" ")
+        if tag == "<EXIT>":
+            return ExitCommand()
+        else:
+            raise ValueError("Unknown command %s" % tag)
+
     def parse_lines(self, lines):
         mode = "C"
         for line_no, line in enumerate(lines, start=1):
@@ -128,7 +144,10 @@ class Script(object):
                     if command == "AUTO":
                         self.auto.append(self.parse_message(rest))
                 elif mode in "CS":
-                    lines.append(Line(line_no, mode, self.parse_message(line)))
+                    if line.startswith("<"):
+                        lines.append(Line(line_no, mode, self.parse_command(line)))
+                    else:
+                        lines.append(Line(line_no, mode, self.parse_message(line)))
 
     def match_auto_request(self, request):
         for message in self.auto:
@@ -153,7 +172,13 @@ class Script(object):
     def match_responses(self):
         responses = []
         while self.lines and self.lines[0].peer == "S":
-            responses.append(self.lines.popleft().message)
+            line = self.lines.popleft()
+            if isinstance(line, Line):
+                responses.append(line.message)
+            elif isinstance(line, ExitCommand):
+                pass
+            else:
+                raise RuntimeError("Unexpected response %r" % line)
         return responses
 
 
@@ -273,10 +298,15 @@ class StubServer(Thread):
             responses = [(SERVER["SUCCESS"], {u"fields": []}
                          if request[0] == CLIENT["RUN"] else {})]
         for response in responses:
-            data = packed(response)
-            self.send_chunk(sock, data)
-            self.send_chunk(sock)
-            log.info("S: %s", message_repr(*response))
+            if isinstance(response, tuple):
+                data = packed(response)
+                self.send_chunk(sock, data)
+                self.send_chunk(sock)
+                log.info("S: %s", message_repr(*response))
+            elif isinstance(response, ExitCommand):
+                exit(0)
+            else:
+                raise RuntimeError("Unknown response type %r" % response)
 
     def send_chunk(self, sock, data=b""):
         header = raw_pack(UINT_16, len(data))
@@ -299,16 +329,10 @@ class StubCluster(object):
             server.start()
 
     def is_alive(self):
-        is_alive = False
-        for server in self.servers:
-            is_alive = is_alive or server.is_alive()
-        return is_alive
+        return all(server.is_alive() for server in self.servers)
 
     def scripts_consumed(self):
-        for server in self.servers:
-            if server.script:
-                return False
-        return True
+        return not any(server.script for server in self.servers)
 
 
 def stub():

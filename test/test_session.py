@@ -23,6 +23,10 @@ from unittest import TestCase
 
 from boltkit.driver import Driver
 from boltkit.server import StubServer
+from boltkit.watcher import watch
+
+
+watch("boltkit.server")
 
 
 class DriverTestCase(TestCase):
@@ -41,7 +45,7 @@ class DriverTestCase(TestCase):
 
     def test_driver_can_create_session_with_full_uri(self):
         # Given
-        driver = Driver("bolt://127.0.0.1:7687", user="neo4j", password="password")
+        driver = Driver("bolt://127.0.0.1:7687", user=u"neo4j", password=u"password")
 
         # When
         session = driver.session()
@@ -52,10 +56,37 @@ class DriverTestCase(TestCase):
 
     def test_driver_can_create_session_with_default_port(self):
         # Given
-        driver = Driver("bolt://127.0.0.1", user="neo4j", password="password")
+        driver = Driver("bolt://127.0.0.1", user=u"neo4j", password=u"password")
 
         # When
         session = driver.session()
+
+        # Then
+        address = session.connection.socket.getpeername()
+        assert address == ("127.0.0.1", 7687), "Session not connected to expected address"
+
+
+class SessionTestCase(TestCase):
+
+    port = 7687
+    address = ("127.0.0.1", port)
+    script = path_join(dirname(__file__), "scripts", "close_on_run.bolt")
+    timeout = 5
+
+    def setUp(self):
+        self.server = StubServer(self.address, self.script, self.timeout)
+        self.server.start()
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_close_on_run(self):
+        # Given
+        driver = Driver("bolt://127.0.0.1:7687", user=u"neo4j", password=u"password")
+
+        # When
+        session = driver.session()
+        session.run(u"RETURN 1")
 
         # Then
         address = session.connection.socket.getpeername()

@@ -499,7 +499,7 @@ def packed(*values):
         # For anything else, we'll just raise an error as we don't know how to encode it.
         #
         else:
-            raise TypeError("Cannot pack objects of type %s" % type(value).__name__)
+            raise ValueError("Cannot pack value %r" % value)
 
     # Finally, we can glue all the individual pieces together and return the full byte
     # representation of the original values.
@@ -713,8 +713,9 @@ SERVER = {
     "FAILURE": 0x7F,            # FAILURE <metadata>
 }
 
-DEFAULT_USER_AGENT = "boltkit/0.0"
+DEFAULT_USER_AGENT = u"boltkit/0.0"
 MAX_CHUNK_SIZE = 65535
+SOCKET_TIMEOUT = 5
 
 
 log = getLogger("boltkit.connection")
@@ -740,6 +741,7 @@ def connect(address, connection_settings):
     # Establish a connection to the host and port specified
     log.info("~~ <CONNECT> \"%s\" %d", *address)
     socket = create_connection(address)
+    socket.settimeout(SOCKET_TIMEOUT)
 
     log.info("C: <BOLT>")
     socket.sendall(BOLT)
@@ -765,7 +767,7 @@ class ConnectionSettings(object):
 
     def __init__(self, user, password, user_agent=None):
         self.user = user
-        auth_token = {"scheme": "basic", "principal": user, "credentials": password}
+        auth_token = {u"scheme": u"basic", u"principal": user, u"credentials": password}
         self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.init_request = Request("INIT ...", CLIENT["INIT"], user_agent, auth_token)
 
@@ -993,7 +995,7 @@ class ProtocolError(Exception):
 class Driver(object):
 
     port = 7687
-    user_agent = "boltkit-driver/1.0.0"
+    user_agent = u"boltkit-driver/1.0.0"
 
     connection_pool = None  # Declared here as the destructor references it
 
