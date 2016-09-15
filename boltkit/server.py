@@ -22,6 +22,7 @@
 Stub server
 """
 
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from collections import deque
 from itertools import chain
 from json import dumps as json_dumps, JSONDecoder
@@ -30,11 +31,10 @@ try:
 except ImportError:
     JSONDecodeError = ValueError
 from logging import getLogger
-from os.path import basename
 from select import select
-from socket import socket, SOL_SOCKET, SO_REUSEADDR
+from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error
 from struct import pack as raw_pack, unpack_from as raw_unpack
-from sys import argv, exit
+from sys import exit
 from threading import Thread
 
 from .driver import h, UINT_16, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSION
@@ -310,53 +310,44 @@ class StubServer(Thread):
 
     def send_chunk(self, sock, data=b""):
         header = raw_pack(UINT_16, len(data))
-        sock.send(header)
-        return "[%s] %s" % (h(header), self.send_bytes(sock, data))
+        header_hex = self.send_bytes(sock, header)
+        data_hex = self.send_bytes(sock, data)
+        return "[%s] %s" % (header_hex, data_hex)
 
     def send_bytes(self, sock, data):
-        sock.send(data)
-        return h(data)
-
-
-class StubCluster(object):
-
-    def __init__(self, servers):
-        self.servers = servers
-
-    def start(self):
-        for server in self.servers:
-            server.daemon = True
-            server.start()
-
-    def is_alive(self):
-        return all(server.is_alive() for server in self.servers)
-
-    def scripts_consumed(self):
-        return not any(server.script for server in self.servers)
+        try:
+            sock.sendall(data)
+        except socket_error as error:
+            log.error("S: <GONE>")
+            exit(1)
+        else:
+            return h(data)
 
 
 def stub():
+    parser = ArgumentParser(
+        description="Run a stub Bolt server.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  boltstub 9001 example.bolt",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-e", "--enterprise", action="store_true",
+                        help="select Neo4j Enterprise Edition (default: Community)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("port", type=int, help="port number to listen for connection on")
+    parser.add_argument("script", help="Bolt script file")
+    parsed = parser.parse_args()
     watch("boltkit.server")
-    if len(argv) < 2:
-        print("usage: %s <ports> <script> [<script> ...]" % basename(argv[0]))
-        exit()
-    servers = []
-    for i, port_string in enumerate(argv[1].split(":"), start=2):
-        try:
-            script_name = argv[i]
-        except IndexError:
-            server = StubServer(("127.0.0.1", int(port_string)))
-        else:
-            server = StubServer(("127.0.0.1", int(port_string)), script_name)
-        servers.append(server)
-    cluster = StubCluster(servers)
-    cluster.start()
+    server = StubServer(("127.0.0.1", parsed.port), parsed.script)
+    server.start()
     try:
-        while cluster.is_alive():
+        while server.is_alive():
             pass
     except KeyboardInterrupt:
         pass
-    exit(0 if cluster.scripts_consumed() else 1)
+    exit(0 if not server.script else 1)
 
 
 if __name__ == "__main__":
