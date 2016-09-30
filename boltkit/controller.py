@@ -23,7 +23,7 @@ from base64 import b64encode
 from hashlib import sha256
 from json import loads as json_loads
 from os import getenv, makedirs
-from os.path import join as path_join, normpath
+from os.path import join as path_join, normpath, realpath
 import platform
 from random import randint
 from socket import create_connection
@@ -64,6 +64,10 @@ class Downloader(object):
         self.write("Downloading build from %s... " % url)
         fin = urlopen(request)
         try:
+            try:
+                makedirs(self.path)
+            except OSError:
+                pass
             with open(package_path, "wb") as fout:
                 more = True
                 while more:
@@ -86,6 +90,10 @@ class Downloader(object):
         self.write("Downloading dist from %s... " % url)
         fin = urlopen(url)
         try:
+            try:
+                makedirs(self.path)
+            except OSError:
+                pass
             with open(package_path, "wb") as fout:
                 more = True
                 while more:
@@ -135,20 +143,6 @@ class Downloader(object):
         return package
 
 
-def untar(archive, path):
-    from tarfile import TarFile
-    with TarFile.open(archive) as files:
-        files.extractall(path)
-        return path_join(path, files.getnames()[0])
-
-
-def unzip(archive, path):
-    from zipfile import ZipFile
-    with ZipFile(archive, 'r') as files:
-        files.extractall(path)
-        return path_join(path, files.namelist()[0])
-
-
 def wait_for_server(host, port, timeout=30):
     running = False
     t = 0
@@ -178,18 +172,22 @@ def user_record(user, password):
 class Controller(object):
 
     package_format = None
-    extractor = None
+
+    @classmethod
+    def extract(cls, archive, path):
+        raise NotImplementedError("Not yet supported for this platform")
 
     @classmethod
     def download(cls, edition, version, path, **kwargs):
         downloader = Downloader(normpath(path), verbose=kwargs.get("verbose"))
-        return downloader.download(edition, version, cls.package_format)
+        path = downloader.download(edition, version, cls.package_format)
+        return realpath(path)
 
     @classmethod
     def install(cls, edition, version, path, **kwargs):
         package = cls.download(edition, version, path, **kwargs)
-        home = cls.extractor(package, path)
-        return home
+        home = cls.extract(package, path)
+        return realpath(home)
 
     def __init__(self, home, verbosity=0):
         self.home = home
@@ -211,7 +209,13 @@ class Controller(object):
 class UnixController(Controller):
 
     package_format = "unix.tar.gz"
-    extractor = untar
+
+    @classmethod
+    def extract(cls, archive, path):
+        from tarfile import TarFile
+        with TarFile.open(archive) as files:
+            files.extractall(path)
+            return path_join(path, files.getnames()[0])
 
     def start(self):
         out = check_output([path_join(self.home, "bin", "neo4j"), "start"])
@@ -258,7 +262,13 @@ class UnixController(Controller):
 class WindowsController(Controller):
 
     package_format = "windows.zip"
-    extractor = unzip
+
+    @classmethod
+    def extract(cls, archive, path):
+        from zipfile import ZipFile
+        with ZipFile(archive, 'r') as files:
+            files.extractall(path)
+            return path_join(path, files.namelist()[0])
 
     def start(self):
         raise NotImplementedError("Windows support not complete")
