@@ -18,7 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
 from json import loads as json_loads
@@ -27,7 +27,7 @@ from os.path import join as path_join, normpath, realpath
 import platform
 from random import randint
 from socket import create_connection
-from subprocess import check_output
+from subprocess import call, check_output
 from sys import stderr, stdin
 from time import sleep
 try:
@@ -205,6 +205,9 @@ class Controller(object):
     def configure(self, properties):
         raise NotImplementedError("Not yet supported for this platform")
 
+    def run(self, *args):
+        raise NotImplementedError("Not yet supported for this platform")
+
 
 class UnixController(Controller):
 
@@ -258,6 +261,9 @@ class UnixController(Controller):
                 else:
                     f_out.write(line)
 
+    def run(self, *args):
+        return call(args)
+
 
 class WindowsController(Controller):
 
@@ -280,6 +286,9 @@ class WindowsController(Controller):
         raise NotImplementedError("Windows support not complete")
 
     def configure(self, properties):
+        raise NotImplementedError("Windows support not complete")
+
+    def run(self, *args):
         raise NotImplementedError("Windows support not complete")
 
 
@@ -327,6 +336,21 @@ def download():
         print(home)
 
 
+def _install(edition, version, path, **kwargs):
+    controller = WindowsController if platform.system() == "Windows" else UnixController
+    try:
+        home = controller.install(edition, version, path, **kwargs)
+    except HTTPError as error:
+        if error.code == 401:
+            raise RuntimeError("Missing or incorrect authorization")
+        elif error.code == 403:
+            raise RuntimeError("Could not download package from %s (403 Forbidden)" % error.url)
+        else:
+            raise
+    else:
+        return home
+
+
 def install():
     parser = ArgumentParser(
         description="Download and extract a Neo4j server package for the current platform.\r\n"
@@ -345,22 +369,9 @@ def install():
     parser.add_argument("path", nargs="?", default=".",
                         help="download destination path (default: .)")
     parsed = parser.parse_args()
-    edition = "enterprise" if parsed.enterprise else "community"
-    controller = WindowsController if platform.system() == "Windows" else UnixController
-    try:
-        home = controller.install(edition, parsed.version, parsed.path, verbose=parsed.verbose)
-    except HTTPError as error:
-        if error.code == 401:
-            stderr.write("ERROR: Missing or incorrect authorization\r\n")
-            exit(1)
-        elif error.code == 403:
-            stderr.write("ERROR: Could not download package from %s "
-                         "(403 Forbidden)\r\n" % error.url)
-            exit(1)
-        else:
-            raise
-    else:
-        print(home)
+    home = _install("enterprise" if parsed.enterprise else "community",
+                    parsed.version, parsed.path, verbose=parsed.verbose)
+    print(home)
 
 
 def start():
@@ -453,3 +464,38 @@ def configure():
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
     controller.configure(properties)
+
+
+def test():
+    parser = ArgumentParser(
+        description="Run tests against a Neo4j server.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neotest -e 3.1.0-M09 test/run/ runtests.sh",
+        epilog="See neoctrl-download for details of supported environment variables.\r\n"
+               "\r\n"
+               "Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-e", "--enterprise", action="store_true",
+                        help="select Neo4j Enterprise Edition (default: Community)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("version", help="Neo4j server version")
+    parser.add_argument("path", help="installation path")
+    parser.add_argument("command", help="command to execute test")
+    parser.add_argument("args", nargs=REMAINDER, help="arguments for test execution")
+    parsed = parser.parse_args()
+    home = _install("enterprise" if parsed.enterprise else "community",
+                    parsed.version, parsed.path, verbose=parsed.verbose)
+    if platform.system() == "Windows":
+        controller = WindowsController(home, 1 if parsed.verbose else 0)
+    else:
+        controller = UnixController(home, 1 if parsed.verbose else 0)
+    controller.create_user("neotest", "neotest")
+    exit_status = 126
+    try:
+        controller.start()
+        exit_status = controller.run(parsed.command, *parsed.args)
+    finally:
+        controller.stop()
+    exit(exit_status)
