@@ -18,6 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import print_function
+
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
@@ -202,6 +204,9 @@ class Controller(object):
     def create_user(self, user, password):
         raise NotImplementedError("Not yet supported for this platform")
 
+    def set_user_role(self, user, role):
+        raise NotImplementedError("Not yet supported for this platform")
+
     def configure(self, properties):
         raise NotImplementedError("Not yet supported for this platform")
 
@@ -247,6 +252,30 @@ class UnixController(Controller):
             f.write(user_record(user, password))
             f.write(b"\r\n")
 
+    def set_user_role(self, user, role):
+        data_dbms = path_join(self.home, "data", "dbms")
+        try:
+            makedirs(data_dbms)
+        except OSError:
+            pass
+        lines = []
+        try:
+            with open(path_join(data_dbms, "roles"), "r") as f:
+                for line in f:
+                    lines.append(line.rstrip())
+        except IOError:
+            lines += ["admin:", "architect:", "publisher:", "reader:"]
+        for i, line in enumerate(lines):
+            if line.startswith(role + ":"):
+                users = line[6:].split(",")
+                users.append(user)
+                line = role + ":" + ",".join(users)
+            lines[i] = line
+        with open(path_join(data_dbms, "roles"), "w") as f:
+            for line in lines:
+                f.write(line)
+                f.write("\n")
+
     def configure(self, properties):
         config_file_path = path_join(self.home, "conf", "neo4j.conf")
         with open(config_file_path, "r") as f_in:
@@ -283,6 +312,9 @@ class WindowsController(Controller):
         raise NotImplementedError("Windows support not complete")
 
     def create_user(self, user, password):
+        raise NotImplementedError("Windows support not complete")
+
+    def set_user_role(self, user, role):
         raise NotImplementedError("Windows support not complete")
 
     def configure(self, properties):
@@ -339,7 +371,7 @@ def download():
 def _install(edition, version, path, **kwargs):
     controller = WindowsController if platform.system() == "Windows" else UnixController
     try:
-        home = controller.install(edition, version, path, **kwargs)
+        home = controller.install(edition, version.strip(), path, **kwargs)
     except HTTPError as error:
         if error.code == 401:
             raise RuntimeError("Missing or incorrect authorization")
@@ -480,22 +512,31 @@ def test():
                         help="select Neo4j Enterprise Edition (default: Community)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
-    parser.add_argument("version", help="Neo4j server version")
+    parser.add_argument("versions", help="Neo4j server versions (colon-separated)")
     parser.add_argument("path", help="installation path")
     parser.add_argument("command", help="command to execute test")
     parser.add_argument("args", nargs=REMAINDER, help="arguments for test execution")
     parsed = parser.parse_args()
-    home = _install("enterprise" if parsed.enterprise else "community",
-                    parsed.version, parsed.path, verbose=parsed.verbose)
-    if platform.system() == "Windows":
-        controller = WindowsController(home, 1 if parsed.verbose else 0)
-    else:
-        controller = UnixController(home, 1 if parsed.verbose else 0)
-    controller.create_user("neotest", "neotest")
-    exit_status = 126
-    try:
-        controller.start()
-        exit_status = controller.run(parsed.command, *parsed.args)
-    finally:
-        controller.stop()
+    exit_status = 0
+    for version in parsed.versions.split(":"):
+        print("\x1b[33;1m************************************************************\x1b[0m")
+        print("\x1b[33;1m*** RUNNING TESTS AGAINST NEO4J SERVER %s\x1b[0m" % version)
+        print("\x1b[33;1m************************************************************\x1b[0m")
+        print()
+        home = _install("enterprise" if parsed.enterprise else "community",
+                        version, parsed.path, verbose=parsed.verbose)
+        if platform.system() == "Windows":
+            controller = WindowsController(home, 1 if parsed.verbose else 0)
+        else:
+            controller = UnixController(home, 1 if parsed.verbose else 0)
+        controller.create_user("neotest", "neotest")
+        controller.set_user_role("neotest", "admin")
+        try:
+            controller.start()
+            exit_status = controller.run(parsed.command, *parsed.args)
+        finally:
+            controller.stop()
+        print()
+        if exit_status != 0:
+            break
     exit(exit_status)
