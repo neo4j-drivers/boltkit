@@ -114,18 +114,23 @@ class Downloader(object):
         if len(version_parts) == 3:
             major, minor, patch = version_parts
             milestone = ""
+            tag = ""
         elif len(version_parts) == 4:
             major, minor, patch, milestone = version_parts
+            tag = ""
+        elif len(version_parts) == 5:
+            major, minor, patch, milestone, tag = version_parts
         else:
             raise ValueError("Unrecognised version %r" % version)
 
         # Derive template and package version
         if package_format in ("unix.tar.gz", "windows.zip"):
             template = "neo4j-%s-%s-%s"
+            package_version = "%s.%s.%s" % (major, minor, patch)
             if milestone:
-                package_version = "%s.%s.%s-%s" % (major, minor, patch, milestone)
-            else:
-                package_version = "%s.%s.%s" % (major, minor, patch)
+                package_version = "%s-%s" % (package_version, milestone)
+            if tag:
+                package_version = "%s-%s" % (package_version, tag)
         else:
             raise ValueError("Unknown format %r" % package_format)
         package = template % (edition, package_version, package_format)
