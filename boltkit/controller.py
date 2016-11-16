@@ -20,13 +20,13 @@
 
 from __future__ import print_function
 
+import platform
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
 from json import loads as json_loads
-from os import getenv, makedirs
+from os import getenv, makedirs, listdir
 from os.path import join as path_join, normpath, realpath
-import platform
 from random import randint
 from socket import create_connection
 from subprocess import call, check_output
@@ -41,6 +41,7 @@ except ImportError:
 
 
 DIST_HOST = "dist.neo4j.org"
+CORES_DIR = "cores"
 
 
 class Downloader(object):
@@ -200,7 +201,7 @@ class Controller(object):
         self.home = home
         self.verbosity = verbosity
 
-    def start(self):
+    def start(self, wait):
         raise NotImplementedError("Not yet supported for this platform")
 
     def stop(self):
@@ -230,19 +231,13 @@ class UnixController(Controller):
             files.extractall(path)
             return path_join(path, files.getnames()[0])
 
-    def start(self):
-        out = check_output([path_join(self.home, "bin", "neo4j"), "start"])
-        uri = None
-        parsed_uri = None
-        for line in out.splitlines():
-            http = line.find(b"http:")
-            if http >= 0:
-                uri = line[http:].split()[0].strip()
-                parsed_uri = urlparse(uri)
-        if not parsed_uri:
-            raise RuntimeError("Cannot ascertain server address")
-        wait_for_server(parsed_uri.hostname, parsed_uri.port)
-        return uri.decode("iso-8859-1")
+    def start(self, wait=True):
+        config_file_path = path_join(self.home, "conf", "neo4j.conf")
+        http_uri = _extract_http_uri_from_config(config_file_path)
+        check_output([path_join(self.home, "bin", "neo4j"), "start"])
+        if wait:
+            wait_for_server(http_uri.hostname, http_uri.port)
+        return http_uri.geturl().strip()
 
     def stop(self):
         check_output([path_join(self.home, "bin", "neo4j"), "stop"])
@@ -287,13 +282,17 @@ class UnixController(Controller):
             lines = f_in.readlines()
         with open(config_file_path, "w") as f_out:
             for line in lines:
-                for key, value in properties.items():
+                for key in properties.keys():
                     if line.startswith(key + "=") or \
                             (line.startswith("#") and line[1:].lstrip().startswith(key + "=")):
-                        f_out.write("%s=%s\n" % (key, value))
+                        f_out.write("%s=%s\n" % (key, properties[key]))
+                        del properties[key]
                         break
                 else:
                     f_out.write(line)
+
+            for key, value in properties.items():
+                f_out.write("%s=%s\n" % (key, value))
 
     def run(self, *args):
         return call(args)
@@ -310,7 +309,7 @@ class WindowsController(Controller):
             files.extractall(path)
             return path_join(path, files.namelist()[0])
 
-    def start(self):
+    def start(self, wait=True):
         raise NotImplementedError("Windows support not complete")
 
     def stop(self):
@@ -356,7 +355,7 @@ def download():
                         help="download destination path (default: .)")
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
-    controller = WindowsController if platform.system() == "Windows" else UnixController
+    controller = _create_controller()
     try:
         home = controller.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
     except HTTPError as error:
@@ -374,7 +373,7 @@ def download():
 
 
 def _install(edition, version, path, **kwargs):
-    controller = WindowsController if platform.system() == "Windows" else UnixController
+    controller = _create_controller()
     try:
         home = controller.install(edition, version.strip(), path, **kwargs)
     except HTTPError as error:
@@ -410,6 +409,57 @@ def install():
                     parsed.version, parsed.path, verbose=parsed.verbose)
     print(home)
 
+def cluster():
+    parser = ArgumentParser(
+        description="Operate Neo4j causal cluster.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-cluster start 3.1.0-M09 $HOME/servers/",
+        epilog="See neoctrl-download for details of supported environment variables.\r\n"
+               "\r\n"
+               "Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+
+    subparsers = parser.add_subparsers(help="available sub-commands", dest="command")
+
+    parser_install = subparsers.add_parser("install",
+                                           description="Download, extract and configure causal cluster.\r\n"
+                                                       "\r\n"
+                                                       "example:\r\n"
+                                                       "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/")
+
+    parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
+    parser_install.add_argument("version", help="Neo4j server version")
+    parser_install.add_argument("core_members_count", help="Number of core members in the Neo4j cluster")
+    parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
+
+    parser_start = subparsers.add_parser("start",
+                                         description="Start the causal cluster located at the given path.\r\n"
+                                                     "\r\n"
+                                                     "example:\r\n"
+                                                     "  neoctrl-cluster start $HOME/cluster/")
+
+    parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
+    parser_stop = subparsers.add_parser("stop",
+                                        description="Stop the causal cluster located at the given path.\r\n"
+                                                    "\r\n"
+                                                    "example:\r\n"
+                                                    "  neoctrl-cluster stop $HOME/cluster/")
+
+    parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
+    parsed = parser.parse_args()
+
+    sub_commands = {
+        "install": _cluster_install,
+        "start": _cluster_start,
+        "stop": _cluster_stop
+    }
+
+    result = sub_commands[parsed.command](parsed)
+    if result is not None:
+        print(result)
 
 def start():
     parser = ArgumentParser(
@@ -545,3 +595,126 @@ def test():
         if exit_status != 0:
             break
     exit(exit_status)
+
+
+def _cluster_install(parsed):
+    path = parsed.path
+
+    try:
+        package = _create_controller().download("enterprise", parsed.version.strip(), path, verbose=parsed.verbose)
+
+        discovery_listen_addresses = []
+        transaction_listen_addresses = []
+        raft_listen_addresses = []
+        bolt_listen_addresses = []
+        http_listen_addresses = []
+        https_listen_addresses = []
+
+        core_members_count = int(parsed.core_members_count)
+
+        for core_idx in range(0, core_members_count):
+            discovery_listen_addresses.append("localhost:%d" % (5000 + core_idx))
+            transaction_listen_addresses.append("localhost:%d" % (6000 + core_idx))
+            raft_listen_addresses.append("localhost:%d" % (7000 + core_idx))
+            bolt_listen_addresses.append("localhost:%d" % (7687 + core_idx))
+            http_listen_addresses.append("localhost:%d" % (7474 + core_idx))
+            https_listen_addresses.append("localhost:%d" % (6474 + core_idx))
+
+        for core_idx in range(0, core_members_count):
+            core_member_path = path_join(path, CORES_DIR, "core-%d" % core_idx)
+            core_member_home = _create_controller().extract(package, core_member_path)
+            _create_controller(core_member_home).configure(
+                {
+                    "dbms.mode": "CORE",
+                    "causal_clustering.expected_core_cluster_size": core_members_count,
+                    "causal_clustering.initial_discovery_members": ",".join(discovery_listen_addresses),
+                    "causal_clustering.discovery_listen_address": discovery_listen_addresses[core_idx],
+                    "causal_clustering.transaction_listen_address": transaction_listen_addresses[core_idx],
+                    "causal_clustering.raft_listen_address": raft_listen_addresses[core_idx],
+                    "dbms.connector.bolt.listen_address": bolt_listen_addresses[core_idx],
+                    "dbms.connector.http.listen_address": http_listen_addresses[core_idx],
+                    "dbms.connector.https.listen_address": https_listen_addresses[core_idx]
+                })
+
+        return realpath(path)
+
+    except HTTPError as error:
+        if error.code == 401:
+            raise RuntimeError("Missing or incorrect authorization")
+        elif error.code == 403:
+            raise RuntimeError("Could not download package from %s (403 Forbidden)" % error.url)
+        else:
+            raise
+
+
+def _cluster_start(parsed):
+    http_uris = _foreach_core(parsed.path, _cluster_member_start)
+
+    for uri in http_uris:
+        parsed_http_uri = urlparse(uri)
+        wait_for_server(parsed_http_uri.hostname, parsed_http_uri.port)
+
+    return "\r\n".join(http_uris)
+
+
+def _cluster_member_start(path):
+    controller = _create_controller(path)
+    return controller.start(False)
+
+
+def _cluster_stop(parsed):
+    _foreach_core(parsed.path, _cluster_member_stop)
+
+
+def _cluster_member_stop(path):
+    controller = _create_controller(path)
+    controller.stop()
+
+
+def _foreach_core(path, action):
+    results = []
+
+    core_dirs = listdir(path_join(path, CORES_DIR))
+    for core_dir in core_dirs:
+        neo4j_dirs = listdir(path_join(path, CORES_DIR, core_dir))
+        for neo4j_dir in neo4j_dirs:
+            if neo4j_dir.startswith("neo4j"):
+                neo4j_path = path_join(path, CORES_DIR, core_dir, neo4j_dir)
+                result = action(neo4j_path)
+                results.append(result)
+                break
+
+    return results
+
+
+def _create_controller(path=None):
+    return WindowsController(path) if platform.system() == "Windows" else UnixController(path)
+
+
+def _extract_http_uri_from_config(config_file_path):
+    with open(config_file_path, "r") as f_in:
+        lines = f_in.readlines()
+
+    http_uri = None
+    for line in lines:
+        if "dbms.connector.http.listen_address" in line:
+            if http_uri is not None:
+                raise RuntimeError("Duplicated http uri configs found in %s" % config_file_path)
+
+            split = line.replace(" ", "").split("dbms.connector.http.listen_address=")
+            raw_uri = split[len(split) - 1]
+            uri = raw_uri if not raw_uri.startswith(":") else "localhost%s" % raw_uri
+            http_uri = uri if uri.startswith("http://") else "http://%s" % uri
+
+    parsed_http_uri = urlparse(http_uri)
+    if not parsed_http_uri:
+        raise RuntimeError("Cannot ascertain server address")
+
+    return parsed_http_uri
+
+# todo:
+#  - add read replicas to cluster create
+#  - add read replicas dynamically
+#  - update page cache memory and Xmx
+#  - provide custom props for cluster setup
+#  - unpack archives to 'core-XXX' dirs directly
