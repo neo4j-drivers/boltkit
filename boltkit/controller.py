@@ -625,6 +625,9 @@ def _cluster_install(parsed):
             core_member_home = _create_controller().extract(package, core_member_path)
             _create_controller(core_member_home).configure(
                 {
+                    "dbms.memory.pagecache.size": "100m",
+                    "dbms.memory.heap.initial_size": "300m",
+                    "dbms.memory.heap.max_size": "300m",
                     "dbms.mode": "CORE",
                     "causal_clustering.expected_core_cluster_size": core_members_count,
                     "causal_clustering.initial_discovery_members": ",".join(discovery_listen_addresses),
@@ -715,6 +718,5 @@ def _extract_http_uri_from_config(config_file_path):
 # todo:
 #  - add read replicas to cluster create
 #  - add read replicas dynamically
-#  - update page cache memory and Xmx
 #  - provide custom props for cluster setup
 #  - unpack archives to 'core-XXX' dirs directly
