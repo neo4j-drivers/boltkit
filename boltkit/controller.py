@@ -31,6 +31,9 @@ from socket import create_connection
 from subprocess import call, check_output
 from sys import stderr, stdin
 from time import sleep
+
+import config
+
 try:
     from urllib.request import urlopen, Request, HTTPError
     from urllib.parse import urlparse
@@ -223,9 +226,6 @@ class Controller(object):
     def set_user_role(self, user, role):
         raise NotImplementedError("Not yet supported for this platform")
 
-    def configure(self, properties):
-        raise NotImplementedError("Not yet supported for this platform")
-
     def run(self, *args):
         raise NotImplementedError("Not yet supported for this platform")
 
@@ -242,11 +242,11 @@ class UnixController(Controller):
             return path_join(path, files.getnames()[0])
 
     def start(self, wait=True):
-        member_info = _extract_cluster_member_info(self.home)
+        http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
         check_output([path_join(self.home, "bin", "neo4j"), "start"])
         if wait:
-            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port)
-        return member_info
+            wait_for_server(http_uri.hostname, http_uri.port)
+        return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self):
         check_output([path_join(self.home, "bin", "neo4j"), "stop"])
@@ -285,24 +285,6 @@ class UnixController(Controller):
                 f.write(line)
                 f.write("\n")
 
-    def configure(self, properties):
-        config_file_path = path_join(self.home, "conf", "neo4j.conf")
-        with open(config_file_path, "r") as f_in:
-            lines = f_in.readlines()
-        with open(config_file_path, "w") as f_out:
-            for line in lines:
-                for key in properties.keys():
-                    if line.startswith(key + "=") or \
-                            (line.startswith("#") and line[1:].lstrip().startswith(key + "=")):
-                        f_out.write("%s=%s\n" % (key, properties[key]))
-                        del properties[key]
-                        break
-                else:
-                    f_out.write(line)
-
-            for key, value in properties.items():
-                f_out.write("%s=%s\n" % (key, value))
-
     def run(self, *args):
         return call(args)
 
@@ -330,11 +312,142 @@ class WindowsController(Controller):
     def set_user_role(self, user, role):
         raise NotImplementedError("Windows support not complete")
 
-    def configure(self, properties):
-        raise NotImplementedError("Windows support not complete")
-
     def run(self, *args):
         raise NotImplementedError("Windows support not complete")
+
+
+class Cluster:
+    def __init__(self, path):
+        self.path = path
+
+    def install(self, version, core_count, read_replica_count, verbose=False):
+        try:
+            package = _create_controller().download("enterprise", version, self.path, verbose=verbose)
+
+            initial_discovery_members = self._install_cores(self.path, package, core_count)
+            self._install_read_replicas(self.path, package, initial_discovery_members, core_count, read_replica_count)
+
+            return realpath(self.path)
+
+        except HTTPError as error:
+            if error.code == 401:
+                raise RuntimeError("Missing or incorrect authorization")
+            elif error.code == 403:
+                raise RuntimeError("Could not download package from %s (403 Forbidden)" % error.url)
+            else:
+                raise
+
+    def start(self):
+        member_info_array = self._foreach_cluster_member(self._cluster_member_start)
+
+        for member_info in member_info_array:
+            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port)
+
+        return "\r\n".join(map(str, member_info_array))
+
+    def stop(self):
+        self._foreach_cluster_member(self._cluster_member_stop)
+
+    @classmethod
+    def _install_cores(cls, path, package, core_count):
+        discovery_listen_addresses = []
+        transaction_listen_addresses = []
+        raft_listen_addresses = []
+        bolt_listen_addresses = []
+        http_listen_addresses = []
+        https_listen_addresses = []
+
+        for core_idx in range(0, core_count):
+            discovery_listen_addresses.append(localhost(INITIAL_DISCOVERY_PORT + core_idx))
+            transaction_listen_addresses.append(localhost(INITIAL_TRANSACTION_PORT + core_idx))
+            raft_listen_addresses.append(localhost(INITIAL_RAFT_PORT + core_idx))
+            bolt_listen_addresses.append(localhost(INITIAL_BOLT_PORT + core_idx))
+            http_listen_addresses.append(localhost(INITIAL_HTTP_PORT + core_idx))
+            https_listen_addresses.append(localhost(INITIAL_HTTPS_PORT + core_idx))
+
+        initial_discovery_members = ",".join(discovery_listen_addresses)
+
+        for core_idx in range(0, core_count):
+            core_member_path = path_join(path, CORES_DIR, CORE_DIR_FORMAT % core_idx)
+            core_member_home = _create_controller().extract(package, core_member_path)
+
+            core_config = config.for_core(core_count, initial_discovery_members,
+                                          discovery_listen_addresses[core_idx],
+                                          transaction_listen_addresses[core_idx],
+                                          raft_listen_addresses[core_idx],
+                                          bolt_listen_addresses[core_idx],
+                                          http_listen_addresses[core_idx],
+                                          https_listen_addresses[core_idx])
+
+            config.update(core_member_home, core_config)
+
+        return initial_discovery_members
+
+    @classmethod
+    def _install_read_replicas(cls, path, package, initial_discovery_members, core_count, read_replica_count):
+        first_bolt_port = INITIAL_BOLT_PORT + core_count
+        first_http_port = INITIAL_HTTP_PORT + core_count
+        first_https_port = INITIAL_HTTPS_PORT + core_count
+
+        for read_replica_idx in range(0, read_replica_count):
+            read_replica_path = path_join(path, READ_REPLICAS_DIR, READ_REPLICA_DIR_FORMAT % read_replica_idx)
+            read_replica_home = _create_controller().extract(package, read_replica_path)
+
+            bolt_listen_address = localhost(first_bolt_port + read_replica_idx)
+            http_listen_address = localhost(first_http_port + read_replica_idx)
+            https_listen_address = localhost(first_https_port + read_replica_idx)
+
+            read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
+                                                          http_listen_address, https_listen_address)
+
+            config.update(read_replica_home, read_replica_config)
+
+
+    @classmethod
+    def _cluster_member_start(cls, path):
+        controller = _create_controller(path)
+        return controller.start(False)
+
+    @classmethod
+    def _cluster_member_stop(cls, path):
+        controller = _create_controller(path)
+        controller.stop()
+
+    def _foreach_cluster_member(self, action):
+        core_results = self._foreach_cluster_root_dir(CORES_DIR, action)
+        read_replica_results = self._foreach_cluster_root_dir(READ_REPLICAS_DIR, action)
+        return core_results + read_replica_results
+
+    def _foreach_cluster_root_dir(self, folder, action):
+        results = []
+
+        cluster_member_dirs = listdir(path_join(self.path, folder))
+        for cluster_member_dir in cluster_member_dirs:
+            neo4j_dirs = listdir(path_join(self.path, folder, cluster_member_dir))
+            for neo4j_dir in neo4j_dirs:
+                if neo4j_dir.startswith("neo4j"):
+                    neo4j_path = path_join(self.path, folder, cluster_member_dir, neo4j_dir)
+                    result = action(neo4j_path)
+                    results.append(result)
+                    break
+
+        return results
+
+
+class InstanceInfo:
+    def __init__(self, http_uri, bolt_uri, path):
+        self.http_uri = http_uri
+        self.bolt_uri = bolt_uri
+        self.path = path
+
+    def http_uri_str(self):
+        return self.http_uri.geturl().strip()
+
+    def bolt_uri_str(self):
+        return self.bolt_uri.geturl().strip()
+
+    def __str__(self):
+        return self.http_uri_str() + " " + self.bolt_uri_str() + " " + self.path
 
 
 def download():
@@ -418,6 +531,7 @@ def install():
                     parsed.version, parsed.path, verbose=parsed.verbose)
     print(home)
 
+
 def cluster():
     parser = ArgumentParser(
         description="Operate Neo4j causal cluster.\r\n"
@@ -439,9 +553,9 @@ def cluster():
 
     parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
     parser_install.add_argument("version", help="Neo4j server version")
-    parser_install.add_argument("-c", "--cores", default="3", dest="core_members_count",
+    parser_install.add_argument("-c", "--cores", default="3", dest="core_count",
                                 help="Number of core members in the Neo4j cluster (default 3)")
-    parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replicas_count",
+    parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replica_count",
                                 help="Number of read replicas in the Neo4j cluster (default 0)")
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
 
@@ -463,15 +577,21 @@ def cluster():
 
     parsed = parser.parse_args()
 
-    sub_commands = {
-        "install": _cluster_install,
-        "start": _cluster_start,
-        "stop": _cluster_stop
-    }
+    cluster_ctrl = Cluster(parsed.path)
+    command = parsed.command
+    if command == "install":
+        core_count = int(parsed.core_count)
+        read_replica_count = int(parsed.read_replica_count)
+        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.verbose)
+        print(path)
+    elif command == "start":
+        cluster_info = cluster_ctrl.start()
+        print(cluster_info)
+    elif command == "stop":
+        cluster_ctrl.stop()
+    else:
+        raise RuntimeError("Unknown command %s" % command)
 
-    result = sub_commands[parsed.command](parsed)
-    if result is not None:
-        print(result)
 
 def start():
     parser = ArgumentParser(
@@ -551,11 +671,7 @@ def configure():
     parser.add_argument("items", metavar="key=value", nargs="+", help="key/value assignment")
     parsed = parser.parse_args()
     properties = dict(item.partition("=")[0::2] for item in parsed.items)
-    if platform.system() == "Windows":
-        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
-    else:
-        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    controller.configure(properties)
+    config.update(parsed.home, properties)
 
 
 def test():
@@ -602,250 +718,12 @@ def test():
     exit(exit_status)
 
 
-def _cluster_install(parsed):
-    path = parsed.path
-    core_members_count = int(parsed.core_members_count)
-    read_replicas_count = int(parsed.read_replicas_count)
-
-    try:
-        package = _create_controller().download("enterprise", parsed.version.strip(), path, verbose=parsed.verbose)
-
-        initial_discovery_members = _install_cores(path, package, core_members_count)
-        _install_read_replicas(path, package, initial_discovery_members, core_members_count, read_replicas_count)
-
-        return realpath(path)
-
-    except HTTPError as error:
-        if error.code == 401:
-            raise RuntimeError("Missing or incorrect authorization")
-        elif error.code == 403:
-            raise RuntimeError("Could not download package from %s (403 Forbidden)" % error.url)
-        else:
-            raise
-
-
-def _install_cores(path, package, core_members_count):
-    discovery_listen_addresses = []
-    transaction_listen_addresses = []
-    raft_listen_addresses = []
-    bolt_listen_addresses = []
-    http_listen_addresses = []
-    https_listen_addresses = []
-
-    for core_idx in range(0, core_members_count):
-        discovery_listen_addresses.append(localhost(INITIAL_DISCOVERY_PORT + core_idx))
-        transaction_listen_addresses.append(localhost(INITIAL_TRANSACTION_PORT + core_idx))
-        raft_listen_addresses.append(localhost(INITIAL_RAFT_PORT + core_idx))
-        bolt_listen_addresses.append(localhost(INITIAL_BOLT_PORT + core_idx))
-        http_listen_addresses.append(localhost(INITIAL_HTTP_PORT + core_idx))
-        https_listen_addresses.append(localhost(INITIAL_HTTPS_PORT + core_idx))
-
-    initial_discovery_members = ",".join(discovery_listen_addresses)
-
-    for core_idx in range(0, core_members_count):
-        core_member_path = path_join(path, CORES_DIR, CORE_DIR_FORMAT % core_idx)
-        core_member_home = _create_controller().extract(package, core_member_path)
-
-        core_config = _core_member_configuration(core_members_count, initial_discovery_members,
-                                                 discovery_listen_addresses[core_idx],
-                                                 transaction_listen_addresses[core_idx],
-                                                 raft_listen_addresses[core_idx],
-                                                 bolt_listen_addresses[core_idx],
-                                                 http_listen_addresses[core_idx],
-                                                 https_listen_addresses[core_idx])
-
-        _create_controller(core_member_home).configure(core_config)
-
-    return initial_discovery_members
-
-
-def _install_read_replicas(path, package, initial_discovery_members, core_members_count, read_replicas_count):
-    first_bolt_port = INITIAL_BOLT_PORT + core_members_count
-    first_http_port = INITIAL_HTTP_PORT + core_members_count
-    first_https_port = INITIAL_HTTPS_PORT + core_members_count
-
-    for read_replica_idx in range(0, read_replicas_count):
-        read_replica_path = path_join(path, READ_REPLICAS_DIR, READ_REPLICA_DIR_FORMAT % read_replica_idx)
-        read_replica_home = _create_controller().extract(package, read_replica_path)
-
-        bolt_listen_address = localhost(first_bolt_port + read_replica_idx)
-        http_listen_address = localhost(first_http_port + read_replica_idx)
-        https_listen_address = localhost(first_https_port + read_replica_idx)
-
-        read_replica_config = _read_replica_configuration(initial_discovery_members, bolt_listen_address,
-                                                          http_listen_address, https_listen_address)
-
-        _create_controller(read_replica_home).configure(read_replica_config)
-
-
-def _core_member_configuration(expected_core_cluster_size, initial_discovery_members, discovery_listen_address,
-                               transaction_listen_address, raft_listen_address, bolt_listen_address,
-                               http_listen_address, https_listen_address):
-    config = {
-        "dbms.mode": "CORE",
-        "causal_clustering.expected_core_cluster_size": expected_core_cluster_size,
-        "causal_clustering.initial_discovery_members": initial_discovery_members,
-        "causal_clustering.discovery_listen_address": discovery_listen_address,
-        "causal_clustering.transaction_listen_address": transaction_listen_address,
-        "causal_clustering.raft_listen_address": raft_listen_address,
-        "dbms.connector.bolt.listen_address": bolt_listen_address,
-        "dbms.connector.http.listen_address": http_listen_address,
-        "dbms.connector.https.listen_address": https_listen_address
-    }
-    config.update(_cluster_memory_configuration())
-    return config
-
-
-def _read_replica_configuration(initial_discovery_members, bolt_listen_address, http_listen_address,
-                                https_listen_address):
-    config = {
-        "dbms.mode": "READ_REPLICA",
-        "causal_clustering.initial_discovery_members": initial_discovery_members,
-        "dbms.connector.bolt.listen_address": bolt_listen_address,
-        "dbms.connector.http.listen_address": http_listen_address,
-        "dbms.connector.https.listen_address": https_listen_address
-    }
-    config.update(_cluster_memory_configuration())
-    return config
-
-
-def _cluster_memory_configuration():
-    return {
-        "dbms.memory.pagecache.size": "100m",
-        "dbms.memory.heap.initial_size": "300m",
-        "dbms.memory.heap.max_size": "300m"
-    }
-
-def _cluster_start(parsed):
-    member_info_array = _foreach_cluster_member(parsed.path, _cluster_member_start)
-
-    for member_info in member_info_array:
-        wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port)
-
-    return "\r\n".join(map(str, member_info_array))
-
-
-def _cluster_member_start(path):
-    controller = _create_controller(path)
-    return controller.start(False)
-
-
-def _cluster_stop(parsed):
-    _foreach_cluster_member(parsed.path, _cluster_member_stop)
-
-
-def _cluster_member_stop(path):
-    controller = _create_controller(path)
-    controller.stop()
-
-
-def _foreach_cluster_member(path, action):
-    core_results = _foreach_cluster_root_dir(path, CORES_DIR, action)
-    read_replica_results = _foreach_cluster_root_dir(path, READ_REPLICAS_DIR, action)
-    return core_results + read_replica_results
-
-
-def _foreach_cluster_root_dir(path, dir, action):
-    results = []
-
-    cluster_member_dirs = listdir(path_join(path, dir))
-    for cluster_member_dir in cluster_member_dirs:
-        neo4j_dirs = listdir(path_join(path, dir, cluster_member_dir))
-        for neo4j_dir in neo4j_dirs:
-            if neo4j_dir.startswith("neo4j"):
-                neo4j_path = path_join(path, dir, cluster_member_dir, neo4j_dir)
-                result = action(neo4j_path)
-                results.append(result)
-                break
-
-    return results
-
-
 def _create_controller(path=None):
     return WindowsController(path) if platform.system() == "Windows" else UnixController(path)
 
 
-def _extract_http_uri_from_config(config_file_path):
-    with open(config_file_path, "r") as f_in:
-        lines = f_in.readlines()
-
-    http_uri = None
-    for line in lines:
-        if "dbms.connector.http.listen_address" in line:
-            if http_uri is not None:
-                raise RuntimeError("Duplicated http uri configs found in %s" % config_file_path)
-
-            split = line.replace(" ", "").split("dbms.connector.http.listen_address=")
-            raw_uri = split[len(split) - 1]
-            uri = raw_uri if not raw_uri.startswith(":") else localhost(int(raw_uri))
-            http_uri = uri if uri.startswith("http://") else "http://%s" % uri
-
-    parsed_http_uri = urlparse(http_uri)
-    if not parsed_http_uri:
-        raise RuntimeError("Cannot ascertain server address")
-
-    return parsed_http_uri
-
-
-def _extract_cluster_member_info(path):
-    config_file_path = path_join(path, "conf", "neo4j.conf")
-
-    with open(config_file_path, "r") as f_in:
-        lines = f_in.readlines()
-
-    http_uri = None
-    bolt_uri = None
-    for line in lines:
-        if "dbms.connector.http.listen_address" in line:
-            if http_uri is not None:
-                raise RuntimeError("Duplicated http uri configs found in %s" % config_file_path)
-
-            http_uri = _parse_uri("http", line)
-
-        if "dbms.connector.bolt.listen_address" in line:
-            if bolt_uri is not None:
-                raise RuntimeError("Duplicated bolt uri configs found in %s" % config_file_path)
-
-            bolt_uri = _parse_uri("bolt", line)
-
-    return InstanceInfo(http_uri, bolt_uri, path)
-
-
-def _parse_uri(scheme, config_entry):
-    split = config_entry.replace(" ", "").split("=")
-    uri = split[len(split) - 1]
-
-    if uri.startswith(":"):
-        uri = scheme + "://localhost" + uri
-
-    if not uri.startswith(scheme + "://"):
-        uri = scheme + "://" + uri
-
-    parsed_uri = urlparse(uri)
-    if not parsed_uri:
-        raise RuntimeError("Cannot parse uri from config '%s'" % uri)
-
-    return parsed_uri
-
-
 def localhost(port):
     return "localhost:%d" % port
-
-
-class InstanceInfo:
-    def __init__(self, http_uri, bolt_uri, path):
-        self.http_uri = http_uri
-        self.bolt_uri = bolt_uri
-        self.path = path
-
-    def http_uri_str(self):
-        return self.http_uri.geturl().strip()
-
-    def bolt_uri_str(self):
-        return self.bolt_uri.geturl().strip()
-
-    def __str__(self):
-        return self.http_uri_str() + " " + self.bolt_uri_str() + " " + self.path
 
 # todo:
 #  - add read replicas dynamically
