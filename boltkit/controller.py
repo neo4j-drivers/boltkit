@@ -221,7 +221,7 @@ class Controller(object):
     def start(self, wait):
         raise NotImplementedError("Not yet supported for this platform")
 
-    def stop(self):
+    def stop(self, kill):
         raise NotImplementedError("Not yet supported for this platform")
 
     def create_user(self, user, password):
@@ -252,8 +252,16 @@ class UnixController(Controller):
             wait_for_server(http_uri.hostname, http_uri.port)
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
-    def stop(self):
-        check_output([path_join(self.home, "bin", "neo4j"), "stop"])
+    def stop(self, kill):
+        if kill:
+            output = check_output([path_join(self.home, "bin", "neo4j"), "status"])
+            if output.startswith("Neo4j is running"):
+                pid = output.split(" ")[-1].strip()
+                check_output(["kill", "-9", pid])
+            else:
+                raise RuntimeError("Neo4j is not running")
+        else:
+            check_output([path_join(self.home, "bin", "neo4j"), "stop"])
 
     def create_user(self, user, password):
         data_dbms = path_join(self.home, "data", "dbms")
@@ -307,7 +315,7 @@ class WindowsController(Controller):
     def start(self, wait=True):
         raise NotImplementedError("Windows support not complete")
 
-    def stop(self):
+    def stop(self, kill):
         raise NotImplementedError("Windows support not complete")
 
     def create_user(self, user, password):
@@ -349,8 +357,11 @@ class Cluster:
 
         return "\r\n".join(map(str, member_info_array))
 
-    def stop(self):
-        self._foreach_cluster_member(self._cluster_member_stop)
+    def stop(self, kill):
+        if kill:
+            self._foreach_cluster_member(self._cluster_member_kill)
+        else:
+            self._foreach_cluster_member(self._cluster_member_stop)
 
     @classmethod
     def _install_cores(cls, path, package, core_count):
@@ -415,7 +426,12 @@ class Cluster:
     @classmethod
     def _cluster_member_stop(cls, path):
         controller = _create_controller(path)
-        controller.stop()
+        controller.stop(False)
+
+    @classmethod
+    def _cluster_member_kill(cls, path):
+        controller = _create_controller(path)
+        controller.stop(True)
 
     def _foreach_cluster_member(self, action):
         core_results = self._foreach_cluster_root_dir(CORES_DIR, action)
@@ -582,6 +598,8 @@ def cluster():
                                                     "  neoctrl-cluster stop $HOME/cluster/",
                                         formatter_class=RawDescriptionHelpFormatter)
 
+    parser_stop.add_argument("-k", "--kill", action="store_true",
+                             help="forcefully kill all instances in the cluster")
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
     parsed = parser.parse_args()
@@ -597,7 +615,7 @@ def cluster():
         cluster_info = cluster_ctrl.start()
         print(cluster_info)
     elif command == "stop":
-        cluster_ctrl.stop()
+        cluster_ctrl.stop(parsed.kill)
     else:
         raise RuntimeError("Unknown command %s" % command)
 
@@ -634,13 +652,15 @@ def stop():
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
+    parser.add_argument("-k", "--kill", action="store_true",
+                        help="forcefully kill the instance")
     parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    controller.stop()
+    controller.stop(parsed.kill)
 
 
 def create_user():
@@ -736,4 +756,3 @@ def localhost(port):
 
 # todo:
 #  - add read replicas dynamically
-#  - hard kill of instances

@@ -271,7 +271,7 @@ Report bugs to drivers@neo4j.com
 
 ### <a name="neo4j-controller/stop"></a>`neoctrl-stop` 
 ```
-usage: neoctrl-stop [-h] [-v] [home]
+usage: neoctrl-stop [-h] [-v] [-k] [home]
 
 Stop an installed Neo4j server instance.
 
@@ -284,6 +284,7 @@ positional arguments:
 optional arguments:
   -h, --help     show this help message and exit
   -v, --verbose  show more detailed output
+  -k, --kill     forcefully kill the instance
 
 Report bugs to drivers@neo4j.com
 ```
@@ -379,7 +380,7 @@ Report bugs to drivers@neo4j.com
 
 ### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster stop` 
 ```
-usage: neoctrl-cluster stop [-h] [path]
+usage: neoctrl-cluster stop [-h] [-k] [path]
 
 Stop the causal cluster located at the given path.
 
@@ -391,6 +392,7 @@ positional arguments:
 
 optional arguments:
   -h, --help  show this help message and exit
+  -k, --kill  forcefully kill all instances in the cluster
 
 See neoctrl-download for details of supported environment variables.
 
