@@ -533,45 +533,50 @@ def install():
 
 
 def cluster():
+    see_download_command = ("See neoctrl-download for details of supported environment variables.\r\n"
+                            "\r\n"
+                            "Report bugs to drivers@neo4j.com")
+
     parser = ArgumentParser(
         description="Operate Neo4j causal cluster.\r\n"
                     "\r\n"
                     "example:\r\n"
                     "  neoctrl-cluster start 3.1.0-M09 $HOME/servers/",
-        epilog="See neoctrl-download for details of supported environment variables.\r\n"
-               "\r\n"
-               "Report bugs to drivers@neo4j.com",
+        epilog=see_download_command,
         formatter_class=RawDescriptionHelpFormatter)
 
     subparsers = parser.add_subparsers(help="available sub-commands", dest="command")
 
-    parser_install = subparsers.add_parser("install",
+    parser_install = subparsers.add_parser("install", epilog=see_download_command,
                                            description="Download, extract and configure causal cluster.\r\n"
                                                        "\r\n"
                                                        "example:\r\n"
-                                                       "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/")
+                                                       "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/",
+                                           formatter_class=RawDescriptionHelpFormatter)
 
     parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
     parser_install.add_argument("version", help="Neo4j server version")
     parser_install.add_argument("-c", "--cores", default="3", dest="core_count",
-                                help="Number of core members in the Neo4j cluster (default 3)")
+                                help="Number of core members in the cluster (default 3)")
     parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replica_count",
-                                help="Number of read replicas in the Neo4j cluster (default 0)")
+                                help="Number of read replicas in the cluster (default 0)")
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
 
-    parser_start = subparsers.add_parser("start",
+    parser_start = subparsers.add_parser("start", epilog=see_download_command,
                                          description="Start the causal cluster located at the given path.\r\n"
                                                      "\r\n"
                                                      "example:\r\n"
-                                                     "  neoctrl-cluster start $HOME/cluster/")
+                                                     "  neoctrl-cluster start $HOME/cluster/",
+                                         formatter_class=RawDescriptionHelpFormatter)
 
     parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
-    parser_stop = subparsers.add_parser("stop",
+    parser_stop = subparsers.add_parser("stop", epilog=see_download_command,
                                         description="Stop the causal cluster located at the given path.\r\n"
                                                     "\r\n"
                                                     "example:\r\n"
-                                                    "  neoctrl-cluster stop $HOME/cluster/")
+                                                    "  neoctrl-cluster stop $HOME/cluster/",
+                                        formatter_class=RawDescriptionHelpFormatter)
 
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
