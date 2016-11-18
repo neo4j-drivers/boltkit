@@ -37,6 +37,7 @@ package_metadata = {
             "boltstub = boltkit.server:stub",
             "neoctrl-download = boltkit.controller:download",
             "neoctrl-install = boltkit.controller:install",
+            "neoctrl-cluster = boltkit.controller:cluster",
             "neoctrl-start = boltkit.controller:start",
             "neoctrl-stop = boltkit.controller:stop",
             "neoctrl-create-user = boltkit.controller:create_user",

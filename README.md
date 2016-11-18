@@ -193,6 +193,9 @@ The Neo4j controller module comprises a set of scripts for downloading, starting
 These scripts should work for any 3.0+ server version and can pull builds from TeamCity if credentials are supplied.
 In this case, the download is attempted from TeamCity first and the regular distribution server is used as a fallback.
 
+Module also contains `neoctrl-cluster` command that gives ability to install, start and stop Neo4j Causal clusters.
+It is supported for 3.1+ Neo4j versions only.
+
 ### `neoctrl-download` <a name="neo4j-controller/download">§</a>
 ```
 usage: neoctrl-download [-h] [-e] [-v] version [path]
@@ -322,6 +325,74 @@ positional arguments:
 optional arguments:
   -h, --help     show this help message and exit
   -v, --verbose  show more detailed output
+
+Report bugs to drivers@neo4j.com
+```
+
+### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster install` 
+```
+usage: neoctrl-cluster install [-h] [-v] [-c CORE_COUNT]
+                               [-r READ_REPLICA_COUNT]
+                               version [path]
+
+Download, extract and configure causal cluster.
+
+example:
+  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/
+
+positional arguments:
+  version               Neo4j server version
+  path                  download destination path (default: .)
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --verbose         show more detailed output
+  -c CORE_COUNT, --cores CORE_COUNT
+                        Number of core members in the cluster (default 3)
+  -r READ_REPLICA_COUNT, --read-replicas READ_REPLICA_COUNT
+                        Number of read replicas in the cluster (default 0)
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
+### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster start` 
+```
+usage: neoctrl-cluster start [-h] [path]
+
+Start the causal cluster located at the given path.
+
+example:
+  neoctrl-cluster start $HOME/cluster/
+
+positional arguments:
+  path        causal cluster location path (default: .)
+
+optional arguments:
+  -h, --help  show this help message and exit
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
+### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster stop` 
+```
+usage: neoctrl-cluster stop [-h] [path]
+
+Stop the causal cluster located at the given path.
+
+example:
+  neoctrl-cluster stop $HOME/cluster/
+
+positional arguments:
+  path        causal cluster location path (default: .)
+
+optional arguments:
+  -h, --help  show this help message and exit
+
+See neoctrl-download for details of supported environment variables.
 
 Report bugs to drivers@neo4j.com
 ```

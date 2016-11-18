@@ -20,18 +20,20 @@
 
 from __future__ import print_function
 
+import platform
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
-from json import loads as json_loads
-from os import getenv, makedirs
+from os import getenv, makedirs, listdir
 from os.path import join as path_join, normpath, realpath
-import platform
 from random import randint
 from socket import create_connection
 from subprocess import call, check_output
 from sys import stderr, stdin
 from time import sleep
+
+import config
+
 try:
     from urllib.request import urlopen, Request, HTTPError
     from urllib.parse import urlparse
@@ -41,6 +43,18 @@ except ImportError:
 
 
 DIST_HOST = "dist.neo4j.org"
+
+CORES_DIR = "cores"
+CORE_DIR_FORMAT = "core-%d"
+READ_REPLICAS_DIR = "read-replicas"
+READ_REPLICA_DIR_FORMAT = "read-replica-%d"
+
+INITIAL_DISCOVERY_PORT = 5000
+INITIAL_TRANSACTION_PORT = 6000
+INITIAL_RAFT_PORT = 7000
+INITIAL_BOLT_PORT = 7687
+INITIAL_HTTP_PORT = 7474
+INITIAL_HTTPS_PORT = 6474
 
 
 class Downloader(object):
@@ -200,7 +214,7 @@ class Controller(object):
         self.home = home
         self.verbosity = verbosity
 
-    def start(self):
+    def start(self, wait):
         raise NotImplementedError("Not yet supported for this platform")
 
     def stop(self):
@@ -210,9 +224,6 @@ class Controller(object):
         raise NotImplementedError("Not yet supported for this platform")
 
     def set_user_role(self, user, role):
-        raise NotImplementedError("Not yet supported for this platform")
-
-    def configure(self, properties):
         raise NotImplementedError("Not yet supported for this platform")
 
     def run(self, *args):
@@ -230,19 +241,12 @@ class UnixController(Controller):
             files.extractall(path)
             return path_join(path, files.getnames()[0])
 
-    def start(self):
-        out = check_output([path_join(self.home, "bin", "neo4j"), "start"])
-        uri = None
-        parsed_uri = None
-        for line in out.splitlines():
-            http = line.find(b"http:")
-            if http >= 0:
-                uri = line[http:].split()[0].strip()
-                parsed_uri = urlparse(uri)
-        if not parsed_uri:
-            raise RuntimeError("Cannot ascertain server address")
-        wait_for_server(parsed_uri.hostname, parsed_uri.port)
-        return uri.decode("iso-8859-1")
+    def start(self, wait=True):
+        http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
+        check_output([path_join(self.home, "bin", "neo4j"), "start"])
+        if wait:
+            wait_for_server(http_uri.hostname, http_uri.port)
+        return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self):
         check_output([path_join(self.home, "bin", "neo4j"), "stop"])
@@ -281,20 +285,6 @@ class UnixController(Controller):
                 f.write(line)
                 f.write("\n")
 
-    def configure(self, properties):
-        config_file_path = path_join(self.home, "conf", "neo4j.conf")
-        with open(config_file_path, "r") as f_in:
-            lines = f_in.readlines()
-        with open(config_file_path, "w") as f_out:
-            for line in lines:
-                for key, value in properties.items():
-                    if line.startswith(key + "=") or \
-                            (line.startswith("#") and line[1:].lstrip().startswith(key + "=")):
-                        f_out.write("%s=%s\n" % (key, value))
-                        break
-                else:
-                    f_out.write(line)
-
     def run(self, *args):
         return call(args)
 
@@ -310,7 +300,7 @@ class WindowsController(Controller):
             files.extractall(path)
             return path_join(path, files.namelist()[0])
 
-    def start(self):
+    def start(self, wait=True):
         raise NotImplementedError("Windows support not complete")
 
     def stop(self):
@@ -322,11 +312,142 @@ class WindowsController(Controller):
     def set_user_role(self, user, role):
         raise NotImplementedError("Windows support not complete")
 
-    def configure(self, properties):
-        raise NotImplementedError("Windows support not complete")
-
     def run(self, *args):
         raise NotImplementedError("Windows support not complete")
+
+
+class Cluster:
+    def __init__(self, path):
+        self.path = path
+
+    def install(self, version, core_count, read_replica_count, verbose=False):
+        try:
+            package = _create_controller().download("enterprise", version, self.path, verbose=verbose)
+
+            initial_discovery_members = self._install_cores(self.path, package, core_count)
+            self._install_read_replicas(self.path, package, initial_discovery_members, core_count, read_replica_count)
+
+            return realpath(self.path)
+
+        except HTTPError as error:
+            if error.code == 401:
+                raise RuntimeError("Missing or incorrect authorization")
+            elif error.code == 403:
+                raise RuntimeError("Could not download package from %s (403 Forbidden)" % error.url)
+            else:
+                raise
+
+    def start(self):
+        member_info_array = self._foreach_cluster_member(self._cluster_member_start)
+
+        for member_info in member_info_array:
+            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port)
+
+        return "\r\n".join(map(str, member_info_array))
+
+    def stop(self):
+        self._foreach_cluster_member(self._cluster_member_stop)
+
+    @classmethod
+    def _install_cores(cls, path, package, core_count):
+        discovery_listen_addresses = []
+        transaction_listen_addresses = []
+        raft_listen_addresses = []
+        bolt_listen_addresses = []
+        http_listen_addresses = []
+        https_listen_addresses = []
+
+        for core_idx in range(0, core_count):
+            discovery_listen_addresses.append(localhost(INITIAL_DISCOVERY_PORT + core_idx))
+            transaction_listen_addresses.append(localhost(INITIAL_TRANSACTION_PORT + core_idx))
+            raft_listen_addresses.append(localhost(INITIAL_RAFT_PORT + core_idx))
+            bolt_listen_addresses.append(localhost(INITIAL_BOLT_PORT + core_idx))
+            http_listen_addresses.append(localhost(INITIAL_HTTP_PORT + core_idx))
+            https_listen_addresses.append(localhost(INITIAL_HTTPS_PORT + core_idx))
+
+        initial_discovery_members = ",".join(discovery_listen_addresses)
+
+        for core_idx in range(0, core_count):
+            core_member_path = path_join(path, CORES_DIR, CORE_DIR_FORMAT % core_idx)
+            core_member_home = _create_controller().extract(package, core_member_path)
+
+            core_config = config.for_core(core_count, initial_discovery_members,
+                                          discovery_listen_addresses[core_idx],
+                                          transaction_listen_addresses[core_idx],
+                                          raft_listen_addresses[core_idx],
+                                          bolt_listen_addresses[core_idx],
+                                          http_listen_addresses[core_idx],
+                                          https_listen_addresses[core_idx])
+
+            config.update(core_member_home, core_config)
+
+        return initial_discovery_members
+
+    @classmethod
+    def _install_read_replicas(cls, path, package, initial_discovery_members, core_count, read_replica_count):
+        first_bolt_port = INITIAL_BOLT_PORT + core_count
+        first_http_port = INITIAL_HTTP_PORT + core_count
+        first_https_port = INITIAL_HTTPS_PORT + core_count
+
+        for read_replica_idx in range(0, read_replica_count):
+            read_replica_path = path_join(path, READ_REPLICAS_DIR, READ_REPLICA_DIR_FORMAT % read_replica_idx)
+            read_replica_home = _create_controller().extract(package, read_replica_path)
+
+            bolt_listen_address = localhost(first_bolt_port + read_replica_idx)
+            http_listen_address = localhost(first_http_port + read_replica_idx)
+            https_listen_address = localhost(first_https_port + read_replica_idx)
+
+            read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
+                                                          http_listen_address, https_listen_address)
+
+            config.update(read_replica_home, read_replica_config)
+
+
+    @classmethod
+    def _cluster_member_start(cls, path):
+        controller = _create_controller(path)
+        return controller.start(False)
+
+    @classmethod
+    def _cluster_member_stop(cls, path):
+        controller = _create_controller(path)
+        controller.stop()
+
+    def _foreach_cluster_member(self, action):
+        core_results = self._foreach_cluster_root_dir(CORES_DIR, action)
+        read_replica_results = self._foreach_cluster_root_dir(READ_REPLICAS_DIR, action)
+        return core_results + read_replica_results
+
+    def _foreach_cluster_root_dir(self, folder, action):
+        results = []
+
+        cluster_member_dirs = listdir(path_join(self.path, folder))
+        for cluster_member_dir in cluster_member_dirs:
+            neo4j_dirs = listdir(path_join(self.path, folder, cluster_member_dir))
+            for neo4j_dir in neo4j_dirs:
+                if neo4j_dir.startswith("neo4j"):
+                    neo4j_path = path_join(self.path, folder, cluster_member_dir, neo4j_dir)
+                    result = action(neo4j_path)
+                    results.append(result)
+                    break
+
+        return results
+
+
+class InstanceInfo:
+    def __init__(self, http_uri, bolt_uri, path):
+        self.http_uri = http_uri
+        self.bolt_uri = bolt_uri
+        self.path = path
+
+    def http_uri_str(self):
+        return self.http_uri.geturl().strip()
+
+    def bolt_uri_str(self):
+        return self.bolt_uri.geturl().strip()
+
+    def __str__(self):
+        return self.http_uri_str() + " " + self.bolt_uri_str() + " " + self.path
 
 
 def download():
@@ -356,7 +477,7 @@ def download():
                         help="download destination path (default: .)")
     parsed = parser.parse_args()
     edition = "enterprise" if parsed.enterprise else "community"
-    controller = WindowsController if platform.system() == "Windows" else UnixController
+    controller = _create_controller()
     try:
         home = controller.download(edition, parsed.version, parsed.path, verbose=parsed.verbose)
     except HTTPError as error:
@@ -374,7 +495,7 @@ def download():
 
 
 def _install(edition, version, path, **kwargs):
-    controller = WindowsController if platform.system() == "Windows" else UnixController
+    controller = _create_controller()
     try:
         home = controller.install(edition, version.strip(), path, **kwargs)
     except HTTPError as error:
@@ -411,6 +532,72 @@ def install():
     print(home)
 
 
+def cluster():
+    see_download_command = ("See neoctrl-download for details of supported environment variables.\r\n"
+                            "\r\n"
+                            "Report bugs to drivers@neo4j.com")
+
+    parser = ArgumentParser(
+        description="Operate Neo4j causal cluster.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-cluster start 3.1.0-M09 $HOME/servers/",
+        epilog=see_download_command,
+        formatter_class=RawDescriptionHelpFormatter)
+
+    subparsers = parser.add_subparsers(help="available sub-commands", dest="command")
+
+    parser_install = subparsers.add_parser("install", epilog=see_download_command,
+                                           description="Download, extract and configure causal cluster.\r\n"
+                                                       "\r\n"
+                                                       "example:\r\n"
+                                                       "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/",
+                                           formatter_class=RawDescriptionHelpFormatter)
+
+    parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
+    parser_install.add_argument("version", help="Neo4j server version")
+    parser_install.add_argument("-c", "--cores", default="3", dest="core_count",
+                                help="Number of core members in the cluster (default 3)")
+    parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replica_count",
+                                help="Number of read replicas in the cluster (default 0)")
+    parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
+
+    parser_start = subparsers.add_parser("start", epilog=see_download_command,
+                                         description="Start the causal cluster located at the given path.\r\n"
+                                                     "\r\n"
+                                                     "example:\r\n"
+                                                     "  neoctrl-cluster start $HOME/cluster/",
+                                         formatter_class=RawDescriptionHelpFormatter)
+
+    parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
+    parser_stop = subparsers.add_parser("stop", epilog=see_download_command,
+                                        description="Stop the causal cluster located at the given path.\r\n"
+                                                    "\r\n"
+                                                    "example:\r\n"
+                                                    "  neoctrl-cluster stop $HOME/cluster/",
+                                        formatter_class=RawDescriptionHelpFormatter)
+
+    parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
+    parsed = parser.parse_args()
+
+    cluster_ctrl = Cluster(parsed.path)
+    command = parsed.command
+    if command == "install":
+        core_count = int(parsed.core_count)
+        read_replica_count = int(parsed.read_replica_count)
+        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.verbose)
+        print(path)
+    elif command == "start":
+        cluster_info = cluster_ctrl.start()
+        print(cluster_info)
+    elif command == "stop":
+        cluster_ctrl.stop()
+    else:
+        raise RuntimeError("Unknown command %s" % command)
+
+
 def start():
     parser = ArgumentParser(
         description="Start an installed Neo4j server instance.\r\n"
@@ -427,17 +614,10 @@ def start():
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    http_uri = controller.start()
-    if http_uri:
-        f = urlopen(http_uri)
-        try:
-            data = f.read()
-        finally:
-            f.close()
-        uris = json_loads(data.decode("utf-8"))
-        bolt_uri = uris["bolt"]
-        print(http_uri)
-        print(bolt_uri)
+    instance_info = controller.start()
+
+    print(instance_info.http_uri_str())
+    print(instance_info.bolt_uri_str())
 
 
 def stop():
@@ -496,11 +676,7 @@ def configure():
     parser.add_argument("items", metavar="key=value", nargs="+", help="key/value assignment")
     parsed = parser.parse_args()
     properties = dict(item.partition("=")[0::2] for item in parsed.items)
-    if platform.system() == "Windows":
-        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
-    else:
-        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    controller.configure(properties)
+    config.update(parsed.home, properties)
 
 
 def test():
@@ -545,3 +721,15 @@ def test():
         if exit_status != 0:
             break
     exit(exit_status)
+
+
+def _create_controller(path=None):
+    return WindowsController(path) if platform.system() == "Windows" else UnixController(path)
+
+
+def localhost(port):
+    return "localhost:%d" % port
+
+# todo:
+#  - add read replicas dynamically
+#  - hard kill of instances
