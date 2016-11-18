@@ -234,9 +234,6 @@ class Controller(object):
     def set_user_role(self, user, role):
         raise NotImplementedError("Not yet supported for this platform")
 
-    def run(self, *args):
-        raise NotImplementedError("Not yet supported for this platform")
-
 
 class UnixController(Controller):
 
@@ -305,9 +302,6 @@ class UnixController(Controller):
                 f.write(line)
                 f.write("\n")
 
-    def run(self, *args):
-        return call(args)
-
 
 class WindowsController(Controller):
 
@@ -355,9 +349,6 @@ class WindowsController(Controller):
         raise NotImplementedError("Windows support not complete")
 
     def set_user_role(self, user, role):
-        raise NotImplementedError("Windows support not complete")
-
-    def run(self, *args):
         raise NotImplementedError("Windows support not complete")
 
 
@@ -780,7 +771,7 @@ def test():
         controller.set_user_role("neotest", "admin")
         try:
             controller.start()
-            exit_status = controller.run(parsed.command, *parsed.args)
+            exit_status = call(parsed.command, *parsed.args)
         finally:
             controller.stop()
         print()
