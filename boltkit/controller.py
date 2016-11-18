@@ -32,7 +32,7 @@ from subprocess import call, check_output
 from sys import stderr, stdin
 from time import sleep
 
-import config
+import boltkit.config as config
 
 try:
     from urllib.request import urlopen, Request, HTTPError
@@ -447,7 +447,7 @@ class InstanceInfo:
         return self.bolt_uri.geturl().strip()
 
     def __str__(self):
-        return self.http_uri_str() + " " + self.bolt_uri_str() + " " + self.path
+        return "%s %s %s" % (self.http_uri_str(), self.bolt_uri_str(), self.path)
 
 
 def download():
