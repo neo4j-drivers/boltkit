@@ -215,7 +215,7 @@ class Controller(object):
         return realpath(home)
 
     @classmethod
-    def additional_properties(cls, instance_id):
+    def os_dependent_config(cls, instance_id):
         raise NotImplementedError("Not yet supported for this platform")
 
     def __init__(self, home, verbosity=0):
@@ -247,7 +247,7 @@ class UnixController(Controller):
             return path_join(path, files.getnames()[0])
 
     @classmethod
-    def additional_properties(cls, instance_id):
+    def os_dependent_config(cls, instance_id):
         return {}
 
     def start(self, wait=True):
@@ -315,7 +315,7 @@ class WindowsController(Controller):
             return path_join(path, files.namelist()[0])
 
     @classmethod
-    def additional_properties(cls, instance_id):
+    def os_dependent_config(cls, instance_id):
         return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
 
     def start(self, wait=True):
@@ -420,7 +420,7 @@ class Cluster:
                                           http_listen_addresses[core_idx],
                                           https_listen_addresses[core_idx])
 
-            os_dependent_config = controller.additional_properties(core_dir)
+            os_dependent_config = controller.os_dependent_config(core_dir)
             core_config.update(os_dependent_config)
 
             config.update(core_member_home, core_config)
@@ -446,7 +446,7 @@ class Cluster:
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
                                                           http_listen_address, https_listen_address)
 
-            os_dependent_config = controller.additional_properties(read_replica_dir)
+            os_dependent_config = controller.os_dependent_config(read_replica_dir)
             read_replica_config.update(os_dependent_config)
 
             config.update(read_replica_home, read_replica_config)
