@@ -214,6 +214,10 @@ class Controller(object):
         home = cls.extract(package, path)
         return realpath(home)
 
+    @classmethod
+    def additional_properties(cls, instance_id):
+        raise NotImplementedError("Not yet supported for this platform")
+
     def __init__(self, home, verbosity=0):
         self.home = home
         self.verbosity = verbosity
@@ -244,6 +248,10 @@ class UnixController(Controller):
         with TarFile.open(archive) as files:
             files.extractall(path)
             return path_join(path, files.getnames()[0])
+
+    @classmethod
+    def additional_properties(cls, instance_id):
+        return {}
 
     def start(self, wait=True):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
@@ -312,11 +320,36 @@ class WindowsController(Controller):
             files.extractall(path)
             return path_join(path, files.namelist()[0])
 
+    @classmethod
+    def additional_properties(cls, instance_id):
+        return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
+
     def start(self, wait=True):
-        raise NotImplementedError("Windows support not complete")
+        http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
+        check_output([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
+        check_output([path_join(self.home, "bin", "neo4j.bat"), "start"])
+        if wait:
+            wait_for_server(http_uri.hostname, http_uri.port)
+        return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self, kill):
-        raise NotImplementedError("Windows support not complete")
+        if kill:
+            windows_service_name = config.extract_windows_service_name(self.home)
+            sc_output = check_output(["sc", "queryex", windows_service_name])
+            pid = None
+            for line in sc_output.splitlines():
+                line = line.strip()
+                if line.startswith("PID"):
+                    pid = line.split(":")[-1]
+
+            if pid is None:
+                raise RuntimeError("Unable to get PID")
+
+            check_output(["taskkill", "/f", "/pid", pid])
+        else:
+            check_output([path_join(self.home, "bin", "neo4j.bat"), "stop"])
+
+        check_output([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
 
     def create_user(self, user, password):
         raise NotImplementedError("Windows support not complete")
@@ -382,9 +415,11 @@ class Cluster:
 
         initial_discovery_members = ",".join(discovery_listen_addresses)
 
+        controller = _create_controller()
         for core_idx in range(0, core_count):
-            core_member_path = path_join(path, CORES_DIR, CORE_DIR_FORMAT % core_idx)
-            core_member_home = _create_controller().extract(package, core_member_path)
+            core_dir = CORE_DIR_FORMAT % core_idx
+            core_member_path = path_join(path, CORES_DIR, core_dir)
+            core_member_home = controller.extract(package, core_member_path)
 
             core_config = config.for_core(core_count, initial_discovery_members,
                                           discovery_listen_addresses[core_idx],
@@ -393,6 +428,9 @@ class Cluster:
                                           bolt_listen_addresses[core_idx],
                                           http_listen_addresses[core_idx],
                                           https_listen_addresses[core_idx])
+
+            os_dependent_config = controller.additional_properties(core_dir)
+            core_config.update(os_dependent_config)
 
             config.update(core_member_home, core_config)
 
@@ -404,9 +442,11 @@ class Cluster:
         first_http_port = INITIAL_HTTP_PORT + core_count
         first_https_port = INITIAL_HTTPS_PORT + core_count
 
+        controller = _create_controller()
         for read_replica_idx in range(0, read_replica_count):
-            read_replica_path = path_join(path, READ_REPLICAS_DIR, READ_REPLICA_DIR_FORMAT % read_replica_idx)
-            read_replica_home = _create_controller().extract(package, read_replica_path)
+            read_replica_dir = READ_REPLICA_DIR_FORMAT % read_replica_idx
+            read_replica_path = path_join(path, READ_REPLICAS_DIR, read_replica_dir)
+            read_replica_home = controller.extract(package, read_replica_path)
 
             bolt_listen_address = localhost(first_bolt_port + read_replica_idx)
             http_listen_address = localhost(first_http_port + read_replica_idx)
@@ -415,8 +455,10 @@ class Cluster:
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
                                                           http_listen_address, https_listen_address)
 
-            config.update(read_replica_home, read_replica_config)
+            os_dependent_config = controller.additional_properties(read_replica_dir)
+            read_replica_config.update(os_dependent_config)
 
+            config.update(read_replica_home, read_replica_config)
 
     @classmethod
     def _cluster_member_start(cls, path):
