@@ -169,17 +169,21 @@ class Downloader(object):
 
 
 def wait_for_server(host, port, timeout=30):
+    port = port or 7474
     running = False
     t = 0
     while not running and t < timeout:
         try:
-            s = create_connection((host, port or 7474))
+            s = create_connection((host, port))
         except IOError:
             sleep(1)
             t += 1
         else:
             s.close()
             running = True
+
+    if not running:
+        raise RuntimeError("Server %s:%d did not become available in %d seconds" % (host, port, timeout))
 
 
 def hex_bytes(data):
