@@ -295,12 +295,22 @@ class UnixController(Controller):
                     lines.append(line.rstrip())
         except IOError:
             lines += ["admin:", "architect:", "publisher:", "reader:"]
+
+        role_set = False
         for i, line in enumerate(lines):
-            if line.startswith(role + ":"):
-                users = line[6:].split(",")
+            split = line.split(":")
+            role_str = split[0]
+            users_str = split[1]
+
+            if role == role_str:
+                users = users_str.split(",") if users_str else []
                 users.append(user)
-                line = role + ":" + ",".join(users)
-            lines[i] = line
+                lines[i] = role + ":" + ",".join(users)
+                role_set = True
+
+        if not role_set:
+            lines.append(role + ":" + user)
+
         with open(path_join(data_dbms, "roles"), "w") as f:
             for line in lines:
                 f.write(line)
