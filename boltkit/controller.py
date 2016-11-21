@@ -25,7 +25,7 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
 from os import getenv, makedirs, listdir
-from os.path import join as path_join, normpath, realpath
+from os.path import join as path_join, normpath, realpath, isdir
 from random import randint
 from socket import create_connection
 from subprocess import call, check_output
@@ -471,18 +471,20 @@ class Cluster:
         read_replica_results = self._foreach_cluster_root_dir(READ_REPLICAS_DIR, action)
         return core_results + read_replica_results
 
-    def _foreach_cluster_root_dir(self, folder, action):
+    def _foreach_cluster_root_dir(self, cluster_home_dir, action):
         results = []
 
-        cluster_member_dirs = listdir(path_join(self.path, folder))
-        for cluster_member_dir in cluster_member_dirs:
-            neo4j_dirs = listdir(path_join(self.path, folder, cluster_member_dir))
-            for neo4j_dir in neo4j_dirs:
-                if neo4j_dir.startswith("neo4j"):
-                    neo4j_path = path_join(self.path, folder, cluster_member_dir, neo4j_dir)
-                    result = action(neo4j_path)
-                    results.append(result)
-                    break
+        cluster_home_dir = path_join(self.path, cluster_home_dir)
+        if isdir(cluster_home_dir):
+            cluster_member_dirs = listdir(cluster_home_dir)
+            for cluster_member_dir in cluster_member_dirs:
+                neo4j_dirs = listdir(path_join(self.path, cluster_home_dir, cluster_member_dir))
+                for neo4j_dir in neo4j_dirs:
+                    if neo4j_dir.startswith("neo4j"):
+                        neo4j_path = path_join(self.path, cluster_home_dir, cluster_member_dir, neo4j_dir)
+                        result = action(neo4j_path)
+                        results.append(result)
+                        break
 
         return results
 
