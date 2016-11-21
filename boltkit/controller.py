@@ -600,13 +600,21 @@ def cluster():
         epilog=see_download_command,
         formatter_class=RawDescriptionHelpFormatter)
 
-    subparsers = parser.add_subparsers(help="available sub-commands", dest="command")
+    sub_commands_with_description = {
+        "install": "Download, extract and configure causal cluster",
+        "start": "Start the causal cluster located at the given path",
+        "stop": "Stop the causal cluster located at the given path"
+    }
+
+    subparsers = parser.add_subparsers(title="available sub-commands", dest="command",
+                                       help="the given causal cluster",
+                                       description=_create_sub_commands_description(sub_commands_with_description))
 
     parser_install = subparsers.add_parser("install", epilog=see_download_command,
-                                           description="Download, extract and configure causal cluster.\r\n"
-                                                       "\r\n"
-                                                       "example:\r\n"
-                                                       "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/",
+                                           description=
+                                           sub_commands_with_description["install"] +
+                                           "\r\n\r\nexample:\r\n"
+                                           "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/",
                                            formatter_class=RawDescriptionHelpFormatter)
 
     parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
@@ -618,19 +626,19 @@ def cluster():
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
 
     parser_start = subparsers.add_parser("start", epilog=see_download_command,
-                                         description="Start the causal cluster located at the given path.\r\n"
-                                                     "\r\n"
-                                                     "example:\r\n"
-                                                     "  neoctrl-cluster start $HOME/cluster/",
+                                         description=
+                                         sub_commands_with_description["start"] +
+                                         "\r\n\r\nexample:\r\n"
+                                         "  neoctrl-cluster start $HOME/cluster/",
                                          formatter_class=RawDescriptionHelpFormatter)
 
     parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
     parser_stop = subparsers.add_parser("stop", epilog=see_download_command,
-                                        description="Stop the causal cluster located at the given path.\r\n"
-                                                    "\r\n"
-                                                    "example:\r\n"
-                                                    "  neoctrl-cluster stop $HOME/cluster/",
+                                        description=
+                                        sub_commands_with_description["stop"] +
+                                        "\r\n\r\nexample:\r\n"
+                                        "  neoctrl-cluster stop $HOME/cluster/",
                                         formatter_class=RawDescriptionHelpFormatter)
 
     parser_stop.add_argument("-k", "--kill", action="store_true",
@@ -640,6 +648,19 @@ def cluster():
     parsed = parser.parse_args()
 
     cluster_ctrl = Cluster(parsed.path)
+    _execute_cluster_command(cluster_ctrl, parsed)
+
+
+def _create_sub_commands_description(sub_commands_with_description):
+    result = []
+
+    for key, value in sub_commands_with_description.items():
+        result.append("%-21s %s" % (key, value))
+
+    return "\r\n".join(result)
+
+
+def _execute_cluster_command(cluster_ctrl, parsed):
     command = parsed.command
     if command == "install":
         core_count = int(parsed.core_count)
