@@ -277,6 +277,35 @@ class Controller(object):
                 f.write("\n")
 
     def set_initial_password(self, password):
+        live_users_detected = False
+
+        if self._neo4j_admin_available():
+            neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
+            output = check_output([neo4j_admin_path, "set-initial-password", password])
+            live_users_detected = "password was not set" in output.lower()
+        else:
+            if self._auth_file_exists():
+                live_users_detected = True
+            else:
+                self.create_user("neo4j", password)
+
+        if live_users_detected:
+            raise RuntimeError("Can't set initial password, live Neo4j-users were detected")
+
+    def _neo4j_admin_available(self):
+        try:
+            neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
+            output = check_output([neo4j_admin_path, "help"])
+            return "set-initial-password" in output
+        except CalledProcessError:
+            return False
+
+    def _auth_file_exists(self):
+        auth_file = path_join(self.home, "data", "dbms", "auth")
+        return isfile(auth_file) and getsize(auth_file) > 0
+
+    @classmethod
+    def _neo4j_admin_script_name(cls):
         raise NotImplementedError("Not yet supported for this platform")
 
 
@@ -313,31 +342,9 @@ class UnixController(Controller):
         else:
             check_output([path_join(self.home, "bin", "neo4j"), "stop"])
 
-    def set_initial_password(self, password):
-        live_users_detected = False
-
-        if self._neo4j_admin_available():
-            output = check_output([path_join(self.home, "bin", "neo4j-admin"), "set-initial-password", password])
-            live_users_detected = "password was not set" in output.lower()
-        else:
-            if self._auth_file_exists():
-                live_users_detected = True
-            else:
-                self.create_user("neo4j", password)
-
-        if live_users_detected:
-            raise RuntimeError("Can't set initial password, live Neo4j-users were detected")
-
-    def _neo4j_admin_available(self):
-        try:
-            output = check_output([path_join(self.home, "bin", "neo4j-admin"), "help"])
-            return "set-initial-password" in output
-        except CalledProcessError:
-            return False
-
-    def _auth_file_exists(self):
-        auth_file = path_join(self.home, "data", "dbms", "auth")
-        return isfile(auth_file) and getsize(auth_file) > 0
+    @classmethod
+    def _neo4j_admin_script_name(cls):
+        return "neo4j-admin"
 
 
 class WindowsController(Controller):
@@ -382,8 +389,9 @@ class WindowsController(Controller):
 
         check_output([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
 
-    def set_initial_password(self, password):
-        raise NotImplementedError("Windows support not complete")
+    @classmethod
+    def _neo4j_admin_script_name(cls):
+        return "neo4j-admin.bat"
 
 
 class Cluster:
