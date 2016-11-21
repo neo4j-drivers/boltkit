@@ -25,10 +25,10 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
 from os import getenv, makedirs, listdir
-from os.path import join as path_join, normpath, realpath, isdir
+from os.path import join as path_join, normpath, realpath, isdir, isfile, getsize
 from random import randint
 from socket import create_connection
-from subprocess import call, check_output
+from subprocess import call, check_output, CalledProcessError
 from sys import stderr, stdin
 from time import sleep
 
@@ -238,6 +238,9 @@ class Controller(object):
     def set_user_role(self, user, role):
         raise NotImplementedError("Not yet supported for this platform")
 
+    def set_initial_password(self, password):
+        raise NotImplementedError("Not yet supported for this platform")
+
 
 class UnixController(Controller):
 
@@ -316,6 +319,32 @@ class UnixController(Controller):
                 f.write(line)
                 f.write("\n")
 
+    def set_initial_password(self, password):
+        live_users_detected = False
+
+        if self._neo4j_admin_available():
+            output = check_output([path_join(self.home, "bin", "neo4j-admin"), "set-initial-password", password])
+            live_users_detected = "password was not set" in output.lower()
+        else:
+            if self._auth_file_exists():
+                live_users_detected = True
+            else:
+                self.create_user("neo4j", password)
+
+        if live_users_detected:
+            raise RuntimeError("Can't set initial password, live Neo4j-users were detected")
+
+    def _neo4j_admin_available(self):
+        try:
+            output = check_output([path_join(self.home, "bin", "neo4j-admin"), "help"])
+            return "set-initial-password" in output
+        except CalledProcessError:
+            return False
+
+    def _auth_file_exists(self):
+        auth_file = path_join(self.home, "data", "dbms", "auth")
+        return isfile(auth_file) and getsize(auth_file) > 0
+
 
 class WindowsController(Controller):
 
@@ -365,6 +394,9 @@ class WindowsController(Controller):
     def set_user_role(self, user, role):
         raise NotImplementedError("Windows support not complete")
 
+    def set_initial_password(self, password):
+        raise NotImplementedError("Windows support not complete")
+
 
 class Cluster:
     def __init__(self, path):
@@ -391,7 +423,7 @@ class Cluster:
         member_info_array = self._foreach_cluster_member(self._cluster_member_start)
 
         for member_info in member_info_array:
-            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port)
+            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port, timeout=120)
 
         return "\r\n".join(map(str, member_info_array))
 
@@ -400,6 +432,9 @@ class Cluster:
             self._foreach_cluster_member(self._cluster_member_kill)
         else:
             self._foreach_cluster_member(self._cluster_member_stop)
+
+    def set_initial_password(self, password):
+        self._foreach_cluster_member(lambda path: self._cluster_member_set_initial_password(path, password))
 
     @classmethod
     def _install_cores(cls, path, package, core_count):
@@ -411,12 +446,12 @@ class Cluster:
         https_listen_addresses = []
 
         for core_idx in range(0, core_count):
-            discovery_listen_addresses.append(localhost(INITIAL_DISCOVERY_PORT + core_idx))
-            transaction_listen_addresses.append(localhost(INITIAL_TRANSACTION_PORT + core_idx))
-            raft_listen_addresses.append(localhost(INITIAL_RAFT_PORT + core_idx))
-            bolt_listen_addresses.append(localhost(INITIAL_BOLT_PORT + core_idx))
-            http_listen_addresses.append(localhost(INITIAL_HTTP_PORT + core_idx))
-            https_listen_addresses.append(localhost(INITIAL_HTTPS_PORT + core_idx))
+            discovery_listen_addresses.append(_localhost(INITIAL_DISCOVERY_PORT + core_idx))
+            transaction_listen_addresses.append(_localhost(INITIAL_TRANSACTION_PORT + core_idx))
+            raft_listen_addresses.append(_localhost(INITIAL_RAFT_PORT + core_idx))
+            bolt_listen_addresses.append(_localhost(INITIAL_BOLT_PORT + core_idx))
+            http_listen_addresses.append(_localhost(INITIAL_HTTP_PORT + core_idx))
+            https_listen_addresses.append(_localhost(INITIAL_HTTPS_PORT + core_idx))
 
         initial_discovery_members = ",".join(discovery_listen_addresses)
 
@@ -453,9 +488,9 @@ class Cluster:
             read_replica_path = path_join(path, READ_REPLICAS_DIR, read_replica_dir)
             read_replica_home = controller.extract(package, read_replica_path)
 
-            bolt_listen_address = localhost(first_bolt_port + read_replica_idx)
-            http_listen_address = localhost(first_http_port + read_replica_idx)
-            https_listen_address = localhost(first_https_port + read_replica_idx)
+            bolt_listen_address = _localhost(first_bolt_port + read_replica_idx)
+            http_listen_address = _localhost(first_http_port + read_replica_idx)
+            https_listen_address = _localhost(first_https_port + read_replica_idx)
 
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
                                                           http_listen_address, https_listen_address)
@@ -479,6 +514,11 @@ class Cluster:
     def _cluster_member_kill(cls, path):
         controller = _create_controller(path)
         controller.stop(True)
+
+    @classmethod
+    def _cluster_member_set_initial_password(cls, path, password):
+        controller = _create_controller(path)
+        return controller.set_initial_password(password)
 
     def _foreach_cluster_member(self, action):
         core_results = self._foreach_cluster_root_dir(CORES_DIR, action)
@@ -617,11 +657,12 @@ def cluster():
     sub_commands_with_description = {
         "install": "Download, extract and configure causal cluster",
         "start": "Start the causal cluster located at the given path",
-        "stop": "Stop the causal cluster located at the given path"
+        "stop": "Stop the causal cluster located at the given path",
+        "set-initial-password": "Sets the initial password of the initial admin user ('neo4j') for all cluster members",
     }
 
     subparsers = parser.add_subparsers(title="available sub-commands", dest="command",
-                                       help="the given causal cluster",
+                                       help="commands are available",
                                        description=_create_sub_commands_description(sub_commands_with_description))
 
     parser_install = subparsers.add_parser("install", epilog=see_download_command,
@@ -659,10 +700,21 @@ def cluster():
                              help="forcefully kill all instances in the cluster")
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
+    parser_set_initial_pwd = subparsers.add_parser("set-initial-password", epilog=see_download_command,
+                                                   description=
+                                                   sub_commands_with_description["set-initial-password"] +
+                                                   "\r\n\r\nexample:\r\n"
+                                                   "  neoctrl-set-initial-password newPassword $HOME/cluster/",
+                                                   formatter_class=RawDescriptionHelpFormatter)
+
+    parser_set_initial_pwd.add_argument("password", help="password for the admin user")
+
+    parser_set_initial_pwd.add_argument("path", nargs="?", default=".",
+                                        help="causal cluster location path (default: .)")
+
     parsed = parser.parse_args()
 
-    cluster_ctrl = Cluster(parsed.path)
-    _execute_cluster_command(cluster_ctrl, parsed)
+    _execute_cluster_command(parsed)
 
 
 def _create_sub_commands_description(sub_commands_with_description):
@@ -674,8 +726,9 @@ def _create_sub_commands_description(sub_commands_with_description):
     return "\r\n".join(result)
 
 
-def _execute_cluster_command(cluster_ctrl, parsed):
+def _execute_cluster_command(parsed):
     command = parsed.command
+    cluster_ctrl = Cluster(parsed.path)
     if command == "install":
         core_count = int(parsed.core_count)
         read_replica_count = int(parsed.read_replica_count)
@@ -686,6 +739,8 @@ def _execute_cluster_command(cluster_ctrl, parsed):
         print(cluster_info)
     elif command == "stop":
         cluster_ctrl.stop(parsed.kill)
+    elif command == "set-initial-password":
+        cluster_ctrl.set_initial_password(parsed.password)
     else:
         raise RuntimeError("Unknown command %s" % command)
 
@@ -731,6 +786,21 @@ def stop():
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
     controller.stop(parsed.kill)
+
+
+def set_initial_password():
+    parser = ArgumentParser(
+        description="Sets the initial password of the initial admin user ('neo4j').\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-set-initial-password newPassword $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("password", help="password for the admin user")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
+    parsed = parser.parse_args()
+    controller = _create_controller(parsed.home)
+    controller.set_initial_password(parsed.password)
 
 
 def create_user():
@@ -821,7 +891,7 @@ def _create_controller(path=None):
     return WindowsController(path) if platform.system() == "Windows" else UnixController(path)
 
 
-def localhost(port):
+def _localhost(port):
     return "localhost:%d" % port
 
 # todo:
