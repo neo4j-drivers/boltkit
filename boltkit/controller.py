@@ -243,7 +243,38 @@ class Controller(object):
             f.write(b"\r\n")
 
     def set_user_role(self, user, role):
-        raise NotImplementedError("Not yet supported for this platform")
+        data_dbms = path_join(self.home, "data", "dbms")
+        try:
+            makedirs(data_dbms)
+        except OSError:
+            pass
+        lines = []
+        try:
+            with open(path_join(data_dbms, "roles"), "r") as f:
+                for line in f:
+                    lines.append(line.rstrip())
+        except IOError:
+            lines += ["admin:", "architect:", "publisher:", "reader:"]
+
+        role_set = False
+        for i, line in enumerate(lines):
+            split = line.split(":")
+            role_str = split[0]
+            users_str = split[1]
+
+            if role == role_str:
+                users = users_str.split(",") if users_str else []
+                users.append(user)
+                lines[i] = role + ":" + ",".join(users)
+                role_set = True
+
+        if not role_set:
+            lines.append(role + ":" + user)
+
+        with open(path_join(data_dbms, "roles"), "w") as f:
+            for line in lines:
+                f.write(line)
+                f.write("\n")
 
     def set_initial_password(self, password):
         raise NotImplementedError("Not yet supported for this platform")
@@ -281,40 +312,6 @@ class UnixController(Controller):
                 raise RuntimeError("Neo4j is not running")
         else:
             check_output([path_join(self.home, "bin", "neo4j"), "stop"])
-
-    def set_user_role(self, user, role):
-        data_dbms = path_join(self.home, "data", "dbms")
-        try:
-            makedirs(data_dbms)
-        except OSError:
-            pass
-        lines = []
-        try:
-            with open(path_join(data_dbms, "roles"), "r") as f:
-                for line in f:
-                    lines.append(line.rstrip())
-        except IOError:
-            lines += ["admin:", "architect:", "publisher:", "reader:"]
-
-        role_set = False
-        for i, line in enumerate(lines):
-            split = line.split(":")
-            role_str = split[0]
-            users_str = split[1]
-
-            if role == role_str:
-                users = users_str.split(",") if users_str else []
-                users.append(user)
-                lines[i] = role + ":" + ",".join(users)
-                role_set = True
-
-        if not role_set:
-            lines.append(role + ":" + user)
-
-        with open(path_join(data_dbms, "roles"), "w") as f:
-            for line in lines:
-                f.write(line)
-                f.write("\n")
 
     def set_initial_password(self, password):
         live_users_detected = False
@@ -384,9 +381,6 @@ class WindowsController(Controller):
             check_output([path_join(self.home, "bin", "neo4j.bat"), "stop"])
 
         check_output([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
-
-    def set_user_role(self, user, role):
-        raise NotImplementedError("Windows support not complete")
 
     def set_initial_password(self, password):
         raise NotImplementedError("Windows support not complete")
