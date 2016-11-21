@@ -330,6 +330,51 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
+### <a name="neo4j-controller/set-initial-password"></a>`neoctrl-set-initial-password` 
+```
+usage: neoctrl-set-initial-password [-h] password [home]
+
+Sets the initial password of the initial admin user ('neo4j').
+
+example:
+  neoctrl-set-initial-password newPassword $HOME/servers/neo4j-community-3.0.0
+
+positional arguments:
+  password    password for the admin user
+  home        Neo4j server directory (default: .)
+
+optional arguments:
+  -h, --help  show this help message and exit
+
+Report bugs to drivers@neo4j.com
+```
+
+### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster` 
+```
+usage: neoctrl-cluster [-h] {install,start,stop,set-initial-password} ...
+
+Operate Neo4j causal cluster.
+
+example:
+  neoctrl-cluster start 3.1.0-M09 $HOME/servers/
+
+optional arguments:
+  -h, --help            show this help message and exit
+
+available sub-commands:
+  start                 Start the causal cluster located at the given path
+  stop                  Stop the causal cluster located at the given path
+  install               Download, extract and configure causal cluster
+  set-initial-password  Sets the initial password of the initial admin user ('neo4j') for all cluster members
+
+  {install,start,stop,set-initial-password}
+                        commands are available
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
 ### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster install` 
 ```
 usage: neoctrl-cluster install [-h] [-v] [-c CORE_COUNT]
@@ -393,6 +438,27 @@ positional arguments:
 optional arguments:
   -h, --help  show this help message and exit
   -k, --kill  forcefully kill all instances in the cluster
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
+### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster set-initial-password` 
+```
+usage: neoctrl-cluster set-initial-password [-h] password [path]
+
+Sets the initial password of the initial admin user ('neo4j') for all cluster members
+
+example:
+  neoctrl-set-initial-password newPassword $HOME/cluster/
+
+positional arguments:
+  password    password for the admin user
+  path        causal cluster location path (default: .)
+
+optional arguments:
+  -h, --help  show this help message and exit
 
 See neoctrl-download for details of supported environment variables.
 
