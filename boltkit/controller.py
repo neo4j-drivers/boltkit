@@ -233,7 +233,14 @@ class Controller(object):
         raise NotImplementedError("Not yet supported for this platform")
 
     def create_user(self, user, password):
-        raise NotImplementedError("Not yet supported for this platform")
+        data_dbms = path_join(self.home, "data", "dbms")
+        try:
+            makedirs(data_dbms)
+        except OSError:
+            pass
+        with open(path_join(data_dbms, "auth"), "ab") as f:
+            f.write(user_record(user, password))
+            f.write(b"\r\n")
 
     def set_user_role(self, user, role):
         raise NotImplementedError("Not yet supported for this platform")
@@ -274,16 +281,6 @@ class UnixController(Controller):
                 raise RuntimeError("Neo4j is not running")
         else:
             check_output([path_join(self.home, "bin", "neo4j"), "stop"])
-
-    def create_user(self, user, password):
-        data_dbms = path_join(self.home, "data", "dbms")
-        try:
-            makedirs(data_dbms)
-        except OSError:
-            pass
-        with open(path_join(data_dbms, "auth"), "ab") as f:
-            f.write(user_record(user, password))
-            f.write(b"\r\n")
 
     def set_user_role(self, user, role):
         data_dbms = path_join(self.home, "data", "dbms")
@@ -387,9 +384,6 @@ class WindowsController(Controller):
             check_output([path_join(self.home, "bin", "neo4j.bat"), "stop"])
 
         check_output([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
-
-    def create_user(self, user, password):
-        raise NotImplementedError("Windows support not complete")
 
     def set_user_role(self, user, role):
         raise NotImplementedError("Windows support not complete")
