@@ -355,9 +355,6 @@ usage: neoctrl-cluster [-h] {install,start,stop,set-initial-password} ...
 
 Operate Neo4j causal cluster.
 
-example:
-  neoctrl-cluster start 3.1.0-M09 $HOME/servers/
-
 optional arguments:
   -h, --help            show this help message and exit
 
@@ -405,18 +402,20 @@ Report bugs to drivers@neo4j.com
 
 ### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster start` 
 ```
-usage: neoctrl-cluster start [-h] [path]
+usage: neoctrl-cluster start [-h] [-t TIMEOUT] [path]
 
-Start the causal cluster located at the given path.
+Start the causal cluster located at the given path
 
 example:
   neoctrl-cluster start $HOME/cluster/
 
 positional arguments:
-  path        causal cluster location path (default: .)
+  path                  causal cluster location path (default: .)
 
 optional arguments:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
+  -t TIMEOUT, --timeout TIMEOUT
+                        startup timeout in seconds (default: 120)
 
 See neoctrl-download for details of supported environment variables.
 

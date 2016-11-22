@@ -415,19 +415,16 @@ class Cluster:
             else:
                 raise
 
-    def start(self):
+    def start(self, timeout):
         member_info_array = self._foreach_cluster_member(self._cluster_member_start)
 
         for member_info in member_info_array:
-            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port, timeout=120)
+            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port, timeout)
 
         return "\r\n".join(map(str, member_info_array))
 
     def stop(self, kill):
-        if kill:
-            self._foreach_cluster_member(self._cluster_member_kill)
-        else:
-            self._foreach_cluster_member(self._cluster_member_stop)
+        self._foreach_cluster_member(self._cluster_member_kill if kill else self._cluster_member_stop)
 
     def set_initial_password(self, password):
         self._foreach_cluster_member(lambda path: self._cluster_member_set_initial_password(path, password))
@@ -642,13 +639,9 @@ def cluster():
                             "\r\n"
                             "Report bugs to drivers@neo4j.com")
 
-    parser = ArgumentParser(
-        description="Operate Neo4j causal cluster.\r\n"
-                    "\r\n"
-                    "example:\r\n"
-                    "  neoctrl-cluster start 3.1.0-M09 $HOME/servers/",
-        epilog=see_download_command,
-        formatter_class=RawDescriptionHelpFormatter)
+    parser = ArgumentParser(description="Operate Neo4j causal cluster.\r\n",
+                            epilog=see_download_command,
+                            formatter_class=RawDescriptionHelpFormatter)
 
     sub_commands_with_description = {
         "install": "Download, extract and configure causal cluster",
@@ -682,6 +675,9 @@ def cluster():
                                          "\r\n\r\nexample:\r\n"
                                          "  neoctrl-cluster start $HOME/cluster/",
                                          formatter_class=RawDescriptionHelpFormatter)
+
+    parser_start.add_argument("-t", "--timeout", default="120", dest="timeout",
+                              help="startup timeout in seconds (default: 120)")
 
     parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
@@ -731,7 +727,8 @@ def _execute_cluster_command(parsed):
         path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.verbose)
         print(path)
     elif command == "start":
-        cluster_info = cluster_ctrl.start()
+        startup_timeout = int(parsed.timeout)
+        cluster_info = cluster_ctrl.start(startup_timeout)
         print(cluster_info)
     elif command == "stop":
         cluster_ctrl.stop(parsed.kill)
