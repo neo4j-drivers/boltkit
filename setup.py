@@ -40,6 +40,7 @@ package_metadata = {
             "neoctrl-cluster = boltkit.controller:cluster",
             "neoctrl-start = boltkit.controller:start",
             "neoctrl-stop = boltkit.controller:stop",
+            "neoctrl-set-initial-password = boltkit.controller:set_initial_password",
             "neoctrl-create-user = boltkit.controller:create_user",
             "neoctrl-configure = boltkit.controller:configure",
             "neotest = boltkit.controller:test",
