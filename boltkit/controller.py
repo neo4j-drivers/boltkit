@@ -398,12 +398,13 @@ class Cluster:
     def __init__(self, path):
         self.path = path
 
-    def install(self, version, core_count, read_replica_count, verbose=False):
+    def install(self, version, core_count, read_replica_count, password, verbose=False):
         try:
             package = _create_controller().download("enterprise", version, self.path, verbose=verbose)
 
             initial_discovery_members = self._install_cores(self.path, package, core_count)
             self._install_read_replicas(self.path, package, initial_discovery_members, core_count, read_replica_count)
+            self._set_initial_password(password)
 
             return realpath(self.path)
 
@@ -426,7 +427,7 @@ class Cluster:
     def stop(self, kill):
         self._foreach_cluster_member(self._cluster_member_kill if kill else self._cluster_member_stop)
 
-    def set_initial_password(self, password):
+    def _set_initial_password(self, password):
         self._foreach_cluster_member(lambda path: self._cluster_member_set_initial_password(path, password))
 
     @classmethod
@@ -646,8 +647,7 @@ def cluster():
     sub_commands_with_description = {
         "install": "Download, extract and configure causal cluster",
         "start": "Start the causal cluster located at the given path",
-        "stop": "Stop the causal cluster located at the given path",
-        "set-initial-password": "Sets the initial password of the initial admin user ('neo4j') for all cluster members",
+        "stop": "Stop the causal cluster located at the given path"
     }
 
     subparsers = parser.add_subparsers(title="available sub-commands", dest="command",
@@ -667,6 +667,8 @@ def cluster():
                                 help="Number of core members in the cluster (default 3)")
     parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replica_count",
                                 help="Number of read replicas in the cluster (default 0)")
+    parser_install.add_argument("-p", "--password", required=True,
+                                help="initial password of the initial admin user ('neo4j') for all cluster members")
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
 
     parser_start = subparsers.add_parser("start", epilog=see_download_command,
@@ -692,20 +694,7 @@ def cluster():
                              help="forcefully kill all instances in the cluster")
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
-    parser_set_initial_pwd = subparsers.add_parser("set-initial-password", epilog=see_download_command,
-                                                   description=
-                                                   sub_commands_with_description["set-initial-password"] +
-                                                   "\r\n\r\nexample:\r\n"
-                                                   "  neoctrl-set-initial-password newPassword $HOME/cluster/",
-                                                   formatter_class=RawDescriptionHelpFormatter)
-
-    parser_set_initial_pwd.add_argument("password", help="password for the admin user")
-
-    parser_set_initial_pwd.add_argument("path", nargs="?", default=".",
-                                        help="causal cluster location path (default: .)")
-
     parsed = parser.parse_args()
-
     _execute_cluster_command(parsed)
 
 
@@ -724,7 +713,7 @@ def _execute_cluster_command(parsed):
     if command == "install":
         core_count = int(parsed.core_count)
         read_replica_count = int(parsed.read_replica_count)
-        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.verbose)
+        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.password, parsed.verbose)
         print(path)
     elif command == "start":
         startup_timeout = int(parsed.timeout)
@@ -732,8 +721,6 @@ def _execute_cluster_command(parsed):
         print(cluster_info)
     elif command == "stop":
         cluster_ctrl.stop(parsed.kill)
-    elif command == "set-initial-password":
-        cluster_ctrl.set_initial_password(parsed.password)
     else:
         raise RuntimeError("Unknown command %s" % command)
 
