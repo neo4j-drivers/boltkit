@@ -25,10 +25,10 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
 from os import getenv, makedirs, listdir
-from os.path import join as path_join, normpath, realpath
+from os.path import join as path_join, normpath, realpath, isdir, isfile, getsize
 from random import randint
 from socket import create_connection
-from subprocess import call, check_output
+from subprocess import call, check_output, CalledProcessError
 from sys import stderr, stdin
 from time import sleep
 
@@ -169,17 +169,21 @@ class Downloader(object):
 
 
 def wait_for_server(host, port, timeout=30):
+    port = port or 7474
     running = False
     t = 0
     while not running and t < timeout:
         try:
-            s = create_connection((host, port or 7474))
+            s = create_connection((host, port))
         except IOError:
             sleep(1)
             t += 1
         else:
             s.close()
             running = True
+
+    if not running:
+        raise RuntimeError("Server %s:%d did not become available in %d seconds" % (host, port, timeout))
 
 
 def hex_bytes(data):
@@ -214,6 +218,10 @@ class Controller(object):
         home = cls.extract(package, path)
         return realpath(home)
 
+    @classmethod
+    def os_dependent_config(cls, instance_id):
+        raise NotImplementedError("Not yet supported for this platform")
+
     def __init__(self, home, verbosity=0):
         self.home = home
         self.verbosity = verbosity
@@ -221,39 +229,8 @@ class Controller(object):
     def start(self, wait):
         raise NotImplementedError("Not yet supported for this platform")
 
-    def stop(self):
+    def stop(self, kill):
         raise NotImplementedError("Not yet supported for this platform")
-
-    def create_user(self, user, password):
-        raise NotImplementedError("Not yet supported for this platform")
-
-    def set_user_role(self, user, role):
-        raise NotImplementedError("Not yet supported for this platform")
-
-    def run(self, *args):
-        raise NotImplementedError("Not yet supported for this platform")
-
-
-class UnixController(Controller):
-
-    package_format = "unix.tar.gz"
-
-    @classmethod
-    def extract(cls, archive, path):
-        from tarfile import TarFile
-        with TarFile.open(archive) as files:
-            files.extractall(path)
-            return path_join(path, files.getnames()[0])
-
-    def start(self, wait=True):
-        http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
-        check_output([path_join(self.home, "bin", "neo4j"), "start"])
-        if wait:
-            wait_for_server(http_uri.hostname, http_uri.port)
-        return InstanceInfo(http_uri, bolt_uri, self.home)
-
-    def stop(self):
-        check_output([path_join(self.home, "bin", "neo4j"), "stop"])
 
     def create_user(self, user, password):
         data_dbms = path_join(self.home, "data", "dbms")
@@ -278,19 +255,96 @@ class UnixController(Controller):
                     lines.append(line.rstrip())
         except IOError:
             lines += ["admin:", "architect:", "publisher:", "reader:"]
+
+        role_set = False
         for i, line in enumerate(lines):
-            if line.startswith(role + ":"):
-                users = line[6:].split(",")
+            split = line.split(":")
+            role_str = split[0]
+            users_str = split[1]
+
+            if role == role_str:
+                users = users_str.split(",") if users_str else []
                 users.append(user)
-                line = role + ":" + ",".join(users)
-            lines[i] = line
+                lines[i] = role + ":" + ",".join(users)
+                role_set = True
+
+        if not role_set:
+            lines.append(role + ":" + user)
+
         with open(path_join(data_dbms, "roles"), "w") as f:
             for line in lines:
                 f.write(line)
                 f.write("\n")
 
-    def run(self, *args):
-        return call(args)
+    def set_initial_password(self, password):
+        live_users_detected = False
+
+        if self._neo4j_admin_available():
+            neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
+            output = check_output([neo4j_admin_path, "set-initial-password", password])
+            live_users_detected = "password was not set" in output.lower()
+        else:
+            if self._auth_file_exists():
+                live_users_detected = True
+            else:
+                self.create_user("neo4j", password)
+
+        if live_users_detected:
+            raise RuntimeError("Can't set initial password, live Neo4j-users were detected")
+
+    def _neo4j_admin_available(self):
+        try:
+            neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
+            output = check_output([neo4j_admin_path, "help"])
+            return "set-initial-password" in output
+        except CalledProcessError:
+            return False
+
+    def _auth_file_exists(self):
+        auth_file = path_join(self.home, "data", "dbms", "auth")
+        return isfile(auth_file) and getsize(auth_file) > 0
+
+    @classmethod
+    def _neo4j_admin_script_name(cls):
+        raise NotImplementedError("Not yet supported for this platform")
+
+
+class UnixController(Controller):
+
+    package_format = "unix.tar.gz"
+
+    @classmethod
+    def extract(cls, archive, path):
+        from tarfile import TarFile
+        with TarFile.open(archive) as files:
+            files.extractall(path)
+            return path_join(path, files.getnames()[0])
+
+    @classmethod
+    def os_dependent_config(cls, instance_id):
+        return {}
+
+    def start(self, wait=True):
+        http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
+        check_output([path_join(self.home, "bin", "neo4j"), "start"])
+        if wait:
+            wait_for_server(http_uri.hostname, http_uri.port)
+        return InstanceInfo(http_uri, bolt_uri, self.home)
+
+    def stop(self, kill):
+        if kill:
+            output = check_output([path_join(self.home, "bin", "neo4j"), "status"])
+            if output.startswith("Neo4j is running"):
+                pid = output.split(" ")[-1].strip()
+                check_output(["kill", "-9", pid])
+            else:
+                raise RuntimeError("Neo4j is not running")
+        else:
+            check_output([path_join(self.home, "bin", "neo4j"), "stop"])
+
+    @classmethod
+    def _neo4j_admin_script_name(cls):
+        return "neo4j-admin"
 
 
 class WindowsController(Controller):
@@ -304,20 +358,40 @@ class WindowsController(Controller):
             files.extractall(path)
             return path_join(path, files.namelist()[0])
 
+    @classmethod
+    def os_dependent_config(cls, instance_id):
+        return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
+
     def start(self, wait=True):
-        raise NotImplementedError("Windows support not complete")
+        http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
+        check_output([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
+        check_output([path_join(self.home, "bin", "neo4j.bat"), "start"])
+        if wait:
+            wait_for_server(http_uri.hostname, http_uri.port)
+        return InstanceInfo(http_uri, bolt_uri, self.home)
 
-    def stop(self):
-        raise NotImplementedError("Windows support not complete")
+    def stop(self, kill):
+        if kill:
+            windows_service_name = config.extract_windows_service_name(self.home)
+            sc_output = check_output(["sc", "queryex", windows_service_name])
+            pid = None
+            for line in sc_output.splitlines():
+                line = line.strip()
+                if line.startswith("PID"):
+                    pid = line.split(":")[-1]
 
-    def create_user(self, user, password):
-        raise NotImplementedError("Windows support not complete")
+            if pid is None:
+                raise RuntimeError("Unable to get PID")
 
-    def set_user_role(self, user, role):
-        raise NotImplementedError("Windows support not complete")
+            check_output(["taskkill", "/f", "/pid", pid])
+        else:
+            check_output([path_join(self.home, "bin", "neo4j.bat"), "stop"])
 
-    def run(self, *args):
-        raise NotImplementedError("Windows support not complete")
+        check_output([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
+
+    @classmethod
+    def _neo4j_admin_script_name(cls):
+        return "neo4j-admin.bat"
 
 
 class Cluster:
@@ -341,16 +415,19 @@ class Cluster:
             else:
                 raise
 
-    def start(self):
+    def start(self, timeout):
         member_info_array = self._foreach_cluster_member(self._cluster_member_start)
 
         for member_info in member_info_array:
-            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port)
+            wait_for_server(member_info.http_uri.hostname, member_info.http_uri.port, timeout)
 
         return "\r\n".join(map(str, member_info_array))
 
-    def stop(self):
-        self._foreach_cluster_member(self._cluster_member_stop)
+    def stop(self, kill):
+        self._foreach_cluster_member(self._cluster_member_kill if kill else self._cluster_member_stop)
+
+    def set_initial_password(self, password):
+        self._foreach_cluster_member(lambda path: self._cluster_member_set_initial_password(path, password))
 
     @classmethod
     def _install_cores(cls, path, package, core_count):
@@ -362,18 +439,20 @@ class Cluster:
         https_listen_addresses = []
 
         for core_idx in range(0, core_count):
-            discovery_listen_addresses.append(localhost(INITIAL_DISCOVERY_PORT + core_idx))
-            transaction_listen_addresses.append(localhost(INITIAL_TRANSACTION_PORT + core_idx))
-            raft_listen_addresses.append(localhost(INITIAL_RAFT_PORT + core_idx))
-            bolt_listen_addresses.append(localhost(INITIAL_BOLT_PORT + core_idx))
-            http_listen_addresses.append(localhost(INITIAL_HTTP_PORT + core_idx))
-            https_listen_addresses.append(localhost(INITIAL_HTTPS_PORT + core_idx))
+            discovery_listen_addresses.append(_localhost(INITIAL_DISCOVERY_PORT + core_idx))
+            transaction_listen_addresses.append(_localhost(INITIAL_TRANSACTION_PORT + core_idx))
+            raft_listen_addresses.append(_localhost(INITIAL_RAFT_PORT + core_idx))
+            bolt_listen_addresses.append(_localhost(INITIAL_BOLT_PORT + core_idx))
+            http_listen_addresses.append(_localhost(INITIAL_HTTP_PORT + core_idx))
+            https_listen_addresses.append(_localhost(INITIAL_HTTPS_PORT + core_idx))
 
         initial_discovery_members = ",".join(discovery_listen_addresses)
 
+        controller = _create_controller()
         for core_idx in range(0, core_count):
-            core_member_path = path_join(path, CORES_DIR, CORE_DIR_FORMAT % core_idx)
-            core_member_home = _create_controller().extract(package, core_member_path)
+            core_dir = CORE_DIR_FORMAT % core_idx
+            core_member_path = path_join(path, CORES_DIR, core_dir)
+            core_member_home = controller.extract(package, core_member_path)
 
             core_config = config.for_core(core_count, initial_discovery_members,
                                           discovery_listen_addresses[core_idx],
@@ -382,6 +461,9 @@ class Cluster:
                                           bolt_listen_addresses[core_idx],
                                           http_listen_addresses[core_idx],
                                           https_listen_addresses[core_idx])
+
+            os_dependent_config = controller.os_dependent_config(core_dir)
+            core_config.update(os_dependent_config)
 
             config.update(core_member_home, core_config)
 
@@ -393,19 +475,23 @@ class Cluster:
         first_http_port = INITIAL_HTTP_PORT + core_count
         first_https_port = INITIAL_HTTPS_PORT + core_count
 
+        controller = _create_controller()
         for read_replica_idx in range(0, read_replica_count):
-            read_replica_path = path_join(path, READ_REPLICAS_DIR, READ_REPLICA_DIR_FORMAT % read_replica_idx)
-            read_replica_home = _create_controller().extract(package, read_replica_path)
+            read_replica_dir = READ_REPLICA_DIR_FORMAT % read_replica_idx
+            read_replica_path = path_join(path, READ_REPLICAS_DIR, read_replica_dir)
+            read_replica_home = controller.extract(package, read_replica_path)
 
-            bolt_listen_address = localhost(first_bolt_port + read_replica_idx)
-            http_listen_address = localhost(first_http_port + read_replica_idx)
-            https_listen_address = localhost(first_https_port + read_replica_idx)
+            bolt_listen_address = _localhost(first_bolt_port + read_replica_idx)
+            http_listen_address = _localhost(first_http_port + read_replica_idx)
+            https_listen_address = _localhost(first_https_port + read_replica_idx)
 
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
                                                           http_listen_address, https_listen_address)
 
-            config.update(read_replica_home, read_replica_config)
+            os_dependent_config = controller.os_dependent_config(read_replica_dir)
+            read_replica_config.update(os_dependent_config)
 
+            config.update(read_replica_home, read_replica_config)
 
     @classmethod
     def _cluster_member_start(cls, path):
@@ -415,25 +501,37 @@ class Cluster:
     @classmethod
     def _cluster_member_stop(cls, path):
         controller = _create_controller(path)
-        controller.stop()
+        controller.stop(False)
+
+    @classmethod
+    def _cluster_member_kill(cls, path):
+        controller = _create_controller(path)
+        controller.stop(True)
+
+    @classmethod
+    def _cluster_member_set_initial_password(cls, path, password):
+        controller = _create_controller(path)
+        return controller.set_initial_password(password)
 
     def _foreach_cluster_member(self, action):
         core_results = self._foreach_cluster_root_dir(CORES_DIR, action)
         read_replica_results = self._foreach_cluster_root_dir(READ_REPLICAS_DIR, action)
         return core_results + read_replica_results
 
-    def _foreach_cluster_root_dir(self, folder, action):
+    def _foreach_cluster_root_dir(self, cluster_home_dir, action):
         results = []
 
-        cluster_member_dirs = listdir(path_join(self.path, folder))
-        for cluster_member_dir in cluster_member_dirs:
-            neo4j_dirs = listdir(path_join(self.path, folder, cluster_member_dir))
-            for neo4j_dir in neo4j_dirs:
-                if neo4j_dir.startswith("neo4j"):
-                    neo4j_path = path_join(self.path, folder, cluster_member_dir, neo4j_dir)
-                    result = action(neo4j_path)
-                    results.append(result)
-                    break
+        cluster_home_dir = path_join(self.path, cluster_home_dir)
+        if isdir(cluster_home_dir):
+            cluster_member_dirs = listdir(cluster_home_dir)
+            for cluster_member_dir in cluster_member_dirs:
+                neo4j_dirs = listdir(path_join(self.path, cluster_home_dir, cluster_member_dir))
+                for neo4j_dir in neo4j_dirs:
+                    if neo4j_dir.startswith("neo4j"):
+                        neo4j_path = path_join(self.path, cluster_home_dir, cluster_member_dir, neo4j_dir)
+                        result = action(neo4j_path)
+                        results.append(result)
+                        break
 
         return results
 
@@ -541,21 +639,26 @@ def cluster():
                             "\r\n"
                             "Report bugs to drivers@neo4j.com")
 
-    parser = ArgumentParser(
-        description="Operate Neo4j causal cluster.\r\n"
-                    "\r\n"
-                    "example:\r\n"
-                    "  neoctrl-cluster start 3.1.0-M09 $HOME/servers/",
-        epilog=see_download_command,
-        formatter_class=RawDescriptionHelpFormatter)
+    parser = ArgumentParser(description="Operate Neo4j causal cluster.\r\n",
+                            epilog=see_download_command,
+                            formatter_class=RawDescriptionHelpFormatter)
 
-    subparsers = parser.add_subparsers(help="available sub-commands", dest="command")
+    sub_commands_with_description = {
+        "install": "Download, extract and configure causal cluster",
+        "start": "Start the causal cluster located at the given path",
+        "stop": "Stop the causal cluster located at the given path",
+        "set-initial-password": "Sets the initial password of the initial admin user ('neo4j') for all cluster members",
+    }
+
+    subparsers = parser.add_subparsers(title="available sub-commands", dest="command",
+                                       help="commands are available",
+                                       description=_create_sub_commands_description(sub_commands_with_description))
 
     parser_install = subparsers.add_parser("install", epilog=see_download_command,
-                                           description="Download, extract and configure causal cluster.\r\n"
-                                                       "\r\n"
-                                                       "example:\r\n"
-                                                       "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/",
+                                           description=
+                                           sub_commands_with_description["install"] +
+                                           "\r\n\r\nexample:\r\n"
+                                           "  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/",
                                            formatter_class=RawDescriptionHelpFormatter)
 
     parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
@@ -567,37 +670,70 @@ def cluster():
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
 
     parser_start = subparsers.add_parser("start", epilog=see_download_command,
-                                         description="Start the causal cluster located at the given path.\r\n"
-                                                     "\r\n"
-                                                     "example:\r\n"
-                                                     "  neoctrl-cluster start $HOME/cluster/",
+                                         description=
+                                         sub_commands_with_description["start"] +
+                                         "\r\n\r\nexample:\r\n"
+                                         "  neoctrl-cluster start $HOME/cluster/",
                                          formatter_class=RawDescriptionHelpFormatter)
+
+    parser_start.add_argument("-t", "--timeout", default="120", dest="timeout",
+                              help="startup timeout in seconds (default: 120)")
 
     parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
     parser_stop = subparsers.add_parser("stop", epilog=see_download_command,
-                                        description="Stop the causal cluster located at the given path.\r\n"
-                                                    "\r\n"
-                                                    "example:\r\n"
-                                                    "  neoctrl-cluster stop $HOME/cluster/",
+                                        description=
+                                        sub_commands_with_description["stop"] +
+                                        "\r\n\r\nexample:\r\n"
+                                        "  neoctrl-cluster stop $HOME/cluster/",
                                         formatter_class=RawDescriptionHelpFormatter)
 
+    parser_stop.add_argument("-k", "--kill", action="store_true",
+                             help="forcefully kill all instances in the cluster")
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
+    parser_set_initial_pwd = subparsers.add_parser("set-initial-password", epilog=see_download_command,
+                                                   description=
+                                                   sub_commands_with_description["set-initial-password"] +
+                                                   "\r\n\r\nexample:\r\n"
+                                                   "  neoctrl-set-initial-password newPassword $HOME/cluster/",
+                                                   formatter_class=RawDescriptionHelpFormatter)
+
+    parser_set_initial_pwd.add_argument("password", help="password for the admin user")
+
+    parser_set_initial_pwd.add_argument("path", nargs="?", default=".",
+                                        help="causal cluster location path (default: .)")
 
     parsed = parser.parse_args()
 
-    cluster_ctrl = Cluster(parsed.path)
+    _execute_cluster_command(parsed)
+
+
+def _create_sub_commands_description(sub_commands_with_description):
+    result = []
+
+    for key, value in sub_commands_with_description.items():
+        result.append("%-21s %s" % (key, value))
+
+    return "\r\n".join(result)
+
+
+def _execute_cluster_command(parsed):
     command = parsed.command
+    cluster_ctrl = Cluster(parsed.path)
     if command == "install":
         core_count = int(parsed.core_count)
         read_replica_count = int(parsed.read_replica_count)
         path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.verbose)
         print(path)
     elif command == "start":
-        cluster_info = cluster_ctrl.start()
+        startup_timeout = int(parsed.timeout)
+        cluster_info = cluster_ctrl.start(startup_timeout)
         print(cluster_info)
     elif command == "stop":
-        cluster_ctrl.stop()
+        cluster_ctrl.stop(parsed.kill)
+    elif command == "set-initial-password":
+        cluster_ctrl.set_initial_password(parsed.password)
     else:
         raise RuntimeError("Unknown command %s" % command)
 
@@ -634,13 +770,30 @@ def stop():
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
+    parser.add_argument("-k", "--kill", action="store_true",
+                        help="forcefully kill the instance")
     parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    controller.stop()
+    controller.stop(parsed.kill)
+
+
+def set_initial_password():
+    parser = ArgumentParser(
+        description="Sets the initial password of the initial admin user ('neo4j').\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-set-initial-password newPassword $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("password", help="password for the admin user")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
+    parsed = parser.parse_args()
+    controller = _create_controller(parsed.home)
+    controller.set_initial_password(parsed.password)
 
 
 def create_user():
@@ -718,7 +871,7 @@ def test():
         controller.set_user_role("neotest", "admin")
         try:
             controller.start()
-            exit_status = controller.run(parsed.command, *parsed.args)
+            exit_status = call(parsed.command, *parsed.args)
         finally:
             controller.stop()
         print()
@@ -731,9 +884,8 @@ def _create_controller(path=None):
     return WindowsController(path) if platform.system() == "Windows" else UnixController(path)
 
 
-def localhost(port):
+def _localhost(port):
     return "localhost:%d" % port
 
 # todo:
 #  - add read replicas dynamically
-#  - hard kill of instances

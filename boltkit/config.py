@@ -32,8 +32,13 @@ except ImportError:
 CONF_DIR = "conf"
 CONF_FILE = "neo4j.conf"
 
-HTTP_URI_SETTING = "dbms.connector.http.listen_address"
-BOLT_URI_SETTING = "dbms.connector.bolt.listen_address"
+HTTP_URI_SETTING = "dbms.connector.http.address" # setting name for 3.0
+HTTP_LISTEN_URI_SETTING = "dbms.connector.http.listen_address" # setting name starting from 3.1
+
+BOLT_URI_SETTING = "dbms.connector.bolt.address" # setting name for 3.0
+BOLT_LISTEN_URI_SETTING = "dbms.connector.bolt.listen_address" # setting name starting from 3.1
+
+WINDOWS_SERVICE_NAME_SETTING = "dbms.windows_service_name"
 
 
 def update(path, properties):
@@ -62,13 +67,13 @@ def extract_http_and_bolt_uris(path):
     bolt_uri = None
 
     for line in lines:
-        if HTTP_URI_SETTING in line:
+        if HTTP_URI_SETTING in line or HTTP_LISTEN_URI_SETTING in line:
             if http_uri is not None:
                 raise RuntimeError("Duplicated http uri configs found in %s" % config_file_path)
 
             http_uri = _parse_uri("http", line)
 
-        if BOLT_URI_SETTING in line:
+        if BOLT_URI_SETTING in line or BOLT_LISTEN_URI_SETTING in line:
             if bolt_uri is not None:
                 raise RuntimeError("Duplicated bolt uri configs found in %s" % config_file_path)
 
@@ -106,6 +111,24 @@ def for_read_replica(initial_discovery_members, bolt_listen_address, http_listen
     }
     config.update(_memory_config())
     return config
+
+
+def extract_windows_service_name(path):
+    config_file_path = _config_file_path(path)
+
+    with open(config_file_path, "r") as f_in:
+        lines = f_in.readlines()
+
+    service_name = None
+
+    for line in lines:
+        if WINDOWS_SERVICE_NAME_SETTING in line:
+            if service_name is not None:
+                raise RuntimeError("Duplicated windows service name configs found in %s" % config_file_path)
+
+            service_name = line.partition("=")[-1].strip()
+
+    return service_name
 
 
 def _memory_config():
