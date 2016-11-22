@@ -196,7 +196,7 @@ In this case, the download is attempted from TeamCity first and the regular dist
 Module also contains `neoctrl-cluster` command that gives ability to install, start and stop Neo4j Causal clusters.
 It is supported for 3.1+ Neo4j versions only.
 
-### `neoctrl-download` <a name="neo4j-controller/download">§</a>
+### `neoctrl-download` <a name="neo4j-controller/download"></a>
 ```
 usage: neoctrl-download [-h] [-e] [-v] version [path]
 
