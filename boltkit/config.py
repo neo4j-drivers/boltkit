@@ -74,7 +74,8 @@ def extract_http_and_bolt_uris(path):
 
             bolt_uri = _parse_uri("bolt", line)
 
-    return http_uri, bolt_uri
+    return (http_uri or urlparse("http://localhost:7474"),
+            bolt_uri or urlparse("bolt://localhost:7687"))
 
 
 def for_core(expected_core_cluster_size, initial_discovery_members, discovery_listen_address,

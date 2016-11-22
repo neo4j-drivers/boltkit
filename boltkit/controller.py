@@ -57,6 +57,10 @@ INITIAL_HTTP_PORT = 7474
 INITIAL_HTTPS_PORT = 6474
 
 
+def bstr(s):
+    return s if isinstance(s, (bytes, bytearray)) else s.encode("UTF-8")
+
+
 class Downloader(object):
 
     def __init__(self, path, verbose=False):
@@ -186,8 +190,8 @@ def user_record(user, password):
     salt = bytearray(randint(0x00, 0xFF) for _ in range(16))
     m = sha256()
     m.update(salt)
-    m.update(password)
-    return b"%s:SHA-256,%s,%s:" % (user, hex_bytes(m.digest()), hex_bytes(salt))
+    m.update(bstr(password))
+    return b"%s:SHA-256,%s,%s:" % (bstr(user), hex_bytes(m.digest()), hex_bytes(salt))
 
 
 class Controller(object):
@@ -257,7 +261,7 @@ class UnixController(Controller):
             makedirs(data_dbms)
         except OSError:
             pass
-        with open(path_join(data_dbms, "auth"), "a") as f:
+        with open(path_join(data_dbms, "auth"), "ab") as f:
             f.write(user_record(user, password))
             f.write(b"\r\n")
 
