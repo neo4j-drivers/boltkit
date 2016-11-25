@@ -226,10 +226,10 @@ class Controller(object):
         self.home = home
         self.verbosity = verbosity
 
-    def start(self, wait):
+    def start(self, wait=True):
         raise NotImplementedError("Not yet supported for this platform")
 
-    def stop(self, kill):
+    def stop(self, kill=False):
         raise NotImplementedError("Not yet supported for this platform")
 
     def create_user(self, user, password):
@@ -331,7 +331,7 @@ class UnixController(Controller):
             wait_for_server(http_uri.hostname, http_uri.port)
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
-    def stop(self, kill):
+    def stop(self, kill=False):
         if kill:
             output = check_output([path_join(self.home, "bin", "neo4j"), "status"])
             if output.startswith("Neo4j is running"):
@@ -370,7 +370,7 @@ class WindowsController(Controller):
             wait_for_server(http_uri.hostname, http_uri.port)
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
-    def stop(self, kill):
+    def stop(self, kill=False):
         if kill:
             windows_service_name = config.extract_windows_service_name(self.home)
             sc_output = check_output(["sc", "queryex", windows_service_name])
@@ -871,10 +871,10 @@ def test():
         controller.set_user_role("neotest", "admin")
         try:
             controller.start()
-            exit_status = call(parsed.command, *parsed.args)
+            exit_status = call([parsed.command] + parsed.args)
         finally:
             controller.stop()
-        print()
+        print("")
         if exit_status != 0:
             break
     exit(exit_status)
