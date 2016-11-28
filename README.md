@@ -351,7 +351,7 @@ Report bugs to drivers@neo4j.com
 
 ### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster` 
 ```
-usage: neoctrl-cluster [-h] {install,start,stop,set-initial-password} ...
+usage: neoctrl-cluster [-h] {install,start,stop} ...
 
 Operate Neo4j causal cluster.
 
@@ -362,10 +362,8 @@ available sub-commands:
   start                 Start the causal cluster located at the given path
   stop                  Stop the causal cluster located at the given path
   install               Download, extract and configure causal cluster
-  set-initial-password  Sets the initial password of the initial admin user ('neo4j') for all cluster members
 
-  {install,start,stop,set-initial-password}
-                        commands are available
+  {install,start,stop}  commands are available
 
 See neoctrl-download for details of supported environment variables.
 
@@ -375,10 +373,10 @@ Report bugs to drivers@neo4j.com
 ### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster install` 
 ```
 usage: neoctrl-cluster install [-h] [-v] [-c CORE_COUNT]
-                               [-r READ_REPLICA_COUNT]
+                               [-r READ_REPLICA_COUNT] -p PASSWORD
                                version [path]
 
-Download, extract and configure causal cluster.
+Download, extract and configure causal cluster
 
 example:
   neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/
@@ -394,6 +392,9 @@ optional arguments:
                         Number of core members in the cluster (default 3)
   -r READ_REPLICA_COUNT, --read-replicas READ_REPLICA_COUNT
                         Number of read replicas in the cluster (default 0)
+  -p PASSWORD, --password PASSWORD
+                        initial password of the initial admin user ('neo4j')
+                        for all cluster members
 
 See neoctrl-download for details of supported environment variables.
 
