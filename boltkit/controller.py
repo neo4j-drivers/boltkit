@@ -49,12 +49,7 @@ CORE_DIR_FORMAT = "core-%d"
 READ_REPLICAS_DIR = "read-replicas"
 READ_REPLICA_DIR_FORMAT = "read-replica-%d"
 
-INITIAL_DISCOVERY_PORT = 5000
-INITIAL_TRANSACTION_PORT = 6000
-INITIAL_RAFT_PORT = 7000
-INITIAL_BOLT_PORT = 7687
-INITIAL_HTTP_PORT = 7474
-INITIAL_HTTPS_PORT = 6474
+DEFAULT_INITIAL_PORT = 20000
 
 
 def bstr(s):
@@ -398,12 +393,12 @@ class Cluster:
     def __init__(self, path):
         self.path = path
 
-    def install(self, version, core_count, read_replica_count, password, verbose=False):
+    def install(self, version, core_count, read_replica_count, initial_port, password, verbose=False):
         try:
             package = _create_controller().download("enterprise", version, self.path, verbose=verbose)
 
-            initial_discovery_members = self._install_cores(self.path, package, core_count)
-            self._install_read_replicas(self.path, package, initial_discovery_members, core_count, read_replica_count)
+            initial_discovery_members, port = self._install_cores(self.path, package, core_count, initial_port)
+            self._install_read_replicas(self.path, package, initial_discovery_members, read_replica_count, port)
             self._set_initial_password(password)
 
             return realpath(self.path)
@@ -431,7 +426,7 @@ class Cluster:
         self._foreach_cluster_member(lambda path: self._cluster_member_set_initial_password(path, password))
 
     @classmethod
-    def _install_cores(cls, path, package, core_count):
+    def _install_cores(cls, path, package, core_count, port):
         discovery_listen_addresses = []
         transaction_listen_addresses = []
         raft_listen_addresses = []
@@ -440,12 +435,18 @@ class Cluster:
         https_listen_addresses = []
 
         for core_idx in range(0, core_count):
-            discovery_listen_addresses.append(_localhost(INITIAL_DISCOVERY_PORT + core_idx))
-            transaction_listen_addresses.append(_localhost(INITIAL_TRANSACTION_PORT + core_idx))
-            raft_listen_addresses.append(_localhost(INITIAL_RAFT_PORT + core_idx))
-            bolt_listen_addresses.append(_localhost(INITIAL_BOLT_PORT + core_idx))
-            http_listen_addresses.append(_localhost(INITIAL_HTTP_PORT + core_idx))
-            https_listen_addresses.append(_localhost(INITIAL_HTTPS_PORT + core_idx))
+            discovery_listen_addresses.append(_localhost(port))
+            port += 1
+            transaction_listen_addresses.append(_localhost(port))
+            port += 1
+            raft_listen_addresses.append(_localhost(port))
+            port += 1
+            bolt_listen_addresses.append(_localhost(port))
+            port += 1
+            http_listen_addresses.append(_localhost(port))
+            port += 1
+            https_listen_addresses.append(_localhost(port))
+            port += 1
 
         initial_discovery_members = ",".join(discovery_listen_addresses)
 
@@ -468,23 +469,22 @@ class Cluster:
 
             config.update(core_member_home, core_config)
 
-        return initial_discovery_members
+        return initial_discovery_members, port
 
     @classmethod
-    def _install_read_replicas(cls, path, package, initial_discovery_members, core_count, read_replica_count):
-        first_bolt_port = INITIAL_BOLT_PORT + core_count
-        first_http_port = INITIAL_HTTP_PORT + core_count
-        first_https_port = INITIAL_HTTPS_PORT + core_count
-
+    def _install_read_replicas(cls, path, package, initial_discovery_members, read_replica_count, port):
         controller = _create_controller()
         for read_replica_idx in range(0, read_replica_count):
             read_replica_dir = READ_REPLICA_DIR_FORMAT % read_replica_idx
             read_replica_path = path_join(path, READ_REPLICAS_DIR, read_replica_dir)
             read_replica_home = controller.extract(package, read_replica_path)
 
-            bolt_listen_address = _localhost(first_bolt_port + read_replica_idx)
-            http_listen_address = _localhost(first_http_port + read_replica_idx)
-            https_listen_address = _localhost(first_https_port + read_replica_idx)
+            bolt_listen_address = _localhost(port)
+            port += 1
+            http_listen_address = _localhost(port)
+            port += 1
+            https_listen_address = _localhost(port)
+            port += 1
 
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
                                                           http_listen_address, https_listen_address)
@@ -667,6 +667,10 @@ def cluster():
                                 help="Number of core members in the cluster (default 3)")
     parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replica_count",
                                 help="Number of read replicas in the cluster (default 0)")
+    parser_install.add_argument("-ip", "--initial-port", default=str(DEFAULT_INITIAL_PORT),
+                                dest="initial_port", help="Initial port number for all used ports on all cluster "
+                                                          "members. Each next port will simply be an increment of "
+                                                          "the previous one (default %d)" % DEFAULT_INITIAL_PORT)
     parser_install.add_argument("-p", "--password", required=True,
                                 help="initial password of the initial admin user ('neo4j') for all cluster members")
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
@@ -713,7 +717,9 @@ def _execute_cluster_command(parsed):
     if command == "install":
         core_count = int(parsed.core_count)
         read_replica_count = int(parsed.read_replica_count)
-        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.password, parsed.verbose)
+        initial_port = int(parsed.initial_port)
+        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, initial_port, parsed.password,
+                                    parsed.verbose)
         print(path)
     elif command == "start":
         startup_timeout = int(parsed.timeout)
