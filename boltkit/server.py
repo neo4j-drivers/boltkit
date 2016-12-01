@@ -32,7 +32,7 @@ except ImportError:
     JSONDecodeError = ValueError
 from logging import getLogger
 from select import select
-from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error
+from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error, SHUT_RDWR
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
@@ -224,6 +224,7 @@ class StubServer(Thread):
         peers, self.peers, self.running = list(self.peers.items()), {}, False
         for sock, peer in peers:
             log.info("~~ <CLOSE> \"%s\" %d", *peer.address)
+            sock.shutdown(SHUT_RDWR)
             sock.close()
 
     def read(self, sock):

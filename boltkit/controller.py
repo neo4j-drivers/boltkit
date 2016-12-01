@@ -187,7 +187,7 @@ def wait_for_server(host, port, timeout=30):
 
 
 def hex_bytes(data):
-    return b"".join(b"%02X" % b for b in bytearray(data))
+    return "".join("%02X" % b for b in bytearray(data))
 
 
 def user_record(user, password):
@@ -195,7 +195,7 @@ def user_record(user, password):
     m = sha256()
     m.update(salt)
     m.update(bstr(password))
-    return b"%s:SHA-256,%s,%s:" % (bstr(user), hex_bytes(m.digest()), hex_bytes(salt))
+    return bstr("%s:SHA-256,%s,%s:" % (user, hex_bytes(m.digest()), hex_bytes(salt)))
 
 
 class Controller(object):
@@ -859,6 +859,9 @@ def test():
         try:
             controller.start()
             exit_status = call([parsed.command] + parsed.args)
+        except OSError:
+            raise RuntimeError("Unable to run command %r with "
+                               "arguments %r" % (parsed.command, parsed.args))
         finally:
             controller.stop()
         print("")
