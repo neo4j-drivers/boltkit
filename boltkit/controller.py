@@ -24,6 +24,7 @@ import platform
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, REMAINDER
 from base64 import b64encode
 from hashlib import sha256
+from itertools import count
 from os import getenv, makedirs, listdir
 from os.path import join as path_join, normpath, realpath, isdir, isfile, getsize
 from random import randint
@@ -49,12 +50,7 @@ CORE_DIR_FORMAT = "core-%d"
 READ_REPLICAS_DIR = "read-replicas"
 READ_REPLICA_DIR_FORMAT = "read-replica-%d"
 
-INITIAL_DISCOVERY_PORT = 5000
-INITIAL_TRANSACTION_PORT = 6000
-INITIAL_RAFT_PORT = 7000
-INITIAL_BOLT_PORT = 7687
-INITIAL_HTTP_PORT = 7474
-INITIAL_HTTPS_PORT = 6474
+DEFAULT_INITIAL_PORT = 20000
 
 
 def bstr(s):
@@ -398,12 +394,13 @@ class Cluster:
     def __init__(self, path):
         self.path = path
 
-    def install(self, version, core_count, read_replica_count, password, verbose=False):
+    def install(self, version, core_count, read_replica_count, initial_port, password, verbose=False):
         try:
             package = _create_controller().download("enterprise", version, self.path, verbose=verbose)
+            port_gen = count(initial_port)
 
-            initial_discovery_members = self._install_cores(self.path, package, core_count)
-            self._install_read_replicas(self.path, package, initial_discovery_members, core_count, read_replica_count)
+            initial_discovery_members = self._install_cores(self.path, package, core_count, port_gen)
+            self._install_read_replicas(self.path, package, initial_discovery_members, read_replica_count, port_gen)
             self._set_initial_password(password)
 
             return realpath(self.path)
@@ -431,7 +428,7 @@ class Cluster:
         self._foreach_cluster_member(lambda path: self._cluster_member_set_initial_password(path, password))
 
     @classmethod
-    def _install_cores(cls, path, package, core_count):
+    def _install_cores(cls, path, package, core_count, port_generator):
         discovery_listen_addresses = []
         transaction_listen_addresses = []
         raft_listen_addresses = []
@@ -440,12 +437,12 @@ class Cluster:
         https_listen_addresses = []
 
         for core_idx in range(0, core_count):
-            discovery_listen_addresses.append(_localhost(INITIAL_DISCOVERY_PORT + core_idx))
-            transaction_listen_addresses.append(_localhost(INITIAL_TRANSACTION_PORT + core_idx))
-            raft_listen_addresses.append(_localhost(INITIAL_RAFT_PORT + core_idx))
-            bolt_listen_addresses.append(_localhost(INITIAL_BOLT_PORT + core_idx))
-            http_listen_addresses.append(_localhost(INITIAL_HTTP_PORT + core_idx))
-            https_listen_addresses.append(_localhost(INITIAL_HTTPS_PORT + core_idx))
+            discovery_listen_addresses.append(_localhost(next(port_generator)))
+            transaction_listen_addresses.append(_localhost(next(port_generator)))
+            raft_listen_addresses.append(_localhost(next(port_generator)))
+            bolt_listen_addresses.append(_localhost(next(port_generator)))
+            http_listen_addresses.append(_localhost(next(port_generator)))
+            https_listen_addresses.append(_localhost(next(port_generator)))
 
         initial_discovery_members = ",".join(discovery_listen_addresses)
 
@@ -471,20 +468,16 @@ class Cluster:
         return initial_discovery_members
 
     @classmethod
-    def _install_read_replicas(cls, path, package, initial_discovery_members, core_count, read_replica_count):
-        first_bolt_port = INITIAL_BOLT_PORT + core_count
-        first_http_port = INITIAL_HTTP_PORT + core_count
-        first_https_port = INITIAL_HTTPS_PORT + core_count
-
+    def _install_read_replicas(cls, path, package, initial_discovery_members, read_replica_count, port_generator):
         controller = _create_controller()
         for read_replica_idx in range(0, read_replica_count):
             read_replica_dir = READ_REPLICA_DIR_FORMAT % read_replica_idx
             read_replica_path = path_join(path, READ_REPLICAS_DIR, read_replica_dir)
             read_replica_home = controller.extract(package, read_replica_path)
 
-            bolt_listen_address = _localhost(first_bolt_port + read_replica_idx)
-            http_listen_address = _localhost(first_http_port + read_replica_idx)
-            https_listen_address = _localhost(first_https_port + read_replica_idx)
+            bolt_listen_address = _localhost(next(port_generator))
+            http_listen_address = _localhost(next(port_generator))
+            https_listen_address = _localhost(next(port_generator))
 
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
                                                           http_listen_address, https_listen_address)
@@ -667,6 +660,10 @@ def cluster():
                                 help="Number of core members in the cluster (default 3)")
     parser_install.add_argument("-r", "--read-replicas", default="0", dest="read_replica_count",
                                 help="Number of read replicas in the cluster (default 0)")
+    parser_install.add_argument("-i", "--initial-port", default=str(DEFAULT_INITIAL_PORT),
+                                dest="initial_port", help="Initial port number for all used ports on all cluster "
+                                                          "members. Each next port will simply be an increment of "
+                                                          "the previous one (default %d)" % DEFAULT_INITIAL_PORT)
     parser_install.add_argument("-p", "--password", required=True,
                                 help="initial password of the initial admin user ('neo4j') for all cluster members")
     parser_install.add_argument("path", nargs="?", default=".", help="download destination path (default: .)")
@@ -711,12 +708,14 @@ def _execute_cluster_command(parsed):
     command = parsed.command
     cluster_ctrl = Cluster(parsed.path)
     if command == "install":
-        core_count = int(parsed.core_count)
-        read_replica_count = int(parsed.read_replica_count)
-        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, parsed.password, parsed.verbose)
+        core_count = _parse_int(parsed.core_count, "core count")
+        read_replica_count = _parse_int(parsed.read_replica_count, "read replica count")
+        initial_port = _parse_int(parsed.initial_port, "initial port")
+        path = cluster_ctrl.install(parsed.version, core_count, read_replica_count, initial_port, parsed.password,
+                                    parsed.verbose)
         print(path)
     elif command == "start":
-        startup_timeout = int(parsed.timeout)
+        startup_timeout = _parse_int(parsed.timeout, "timeout")
         cluster_info = cluster_ctrl.start(startup_timeout)
         print(cluster_info)
     elif command == "stop":
@@ -872,6 +871,13 @@ def test():
 
 def _create_controller(path=None):
     return WindowsController(path) if platform.system() == "Windows" else UnixController(path)
+
+
+def _parse_int(string_value, message):
+    try:
+        return int(string_value)
+    except ValueError:
+        raise RuntimeError("Int value expected for %s but received '%s'" % (message, string_value))
 
 
 def _localhost(port):
