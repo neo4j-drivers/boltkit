@@ -277,7 +277,7 @@ class Controller(object):
 
         if self._neo4j_admin_available():
             neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
-            output = check_output([neo4j_admin_path, "set-initial-password", password])
+            output = _invoke([neo4j_admin_path, "set-initial-password", password])
             live_users_detected = "password was not set" in output.lower()
         else:
             if self._auth_file_exists():
@@ -291,7 +291,7 @@ class Controller(object):
     def _neo4j_admin_available(self):
         try:
             neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
-            output = check_output([neo4j_admin_path, "help"])
+            output = _invoke([neo4j_admin_path, "help"])
             return "set-initial-password" in output
         except CalledProcessError:
             return False
@@ -322,21 +322,21 @@ class UnixController(Controller):
 
     def start(self, wait=True):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
-        check_output([path_join(self.home, "bin", "neo4j"), "start"])
+        _invoke([path_join(self.home, "bin", "neo4j"), "start"])
         if wait:
             wait_for_server(http_uri.hostname, http_uri.port)
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self, kill=False):
         if kill:
-            output = check_output([path_join(self.home, "bin", "neo4j"), "status"])
+            output = _invoke([path_join(self.home, "bin", "neo4j"), "status"])
             if output.startswith("Neo4j is running"):
                 pid = output.split(" ")[-1].strip()
-                check_output(["kill", "-9", pid])
+                _invoke(["kill", "-9", pid])
             else:
                 raise RuntimeError("Neo4j is not running")
         else:
-            check_output([path_join(self.home, "bin", "neo4j"), "stop"])
+            _invoke([path_join(self.home, "bin", "neo4j"), "stop"])
 
     @classmethod
     def _neo4j_admin_script_name(cls):
@@ -360,8 +360,8 @@ class WindowsController(Controller):
 
     def start(self, wait=True):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
-        check_output([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
-        check_output([path_join(self.home, "bin", "neo4j.bat"), "start"])
+        _invoke([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
+        _invoke([path_join(self.home, "bin", "neo4j.bat"), "start"])
         if wait:
             wait_for_server(http_uri.hostname, http_uri.port)
         return InstanceInfo(http_uri, bolt_uri, self.home)
@@ -369,7 +369,7 @@ class WindowsController(Controller):
     def stop(self, kill=False):
         if kill:
             windows_service_name = config.extract_windows_service_name(self.home)
-            sc_output = check_output(["sc", "queryex", windows_service_name])
+            sc_output = _invoke(["sc", "queryex", windows_service_name])
             pid = None
             for line in sc_output.splitlines():
                 line = line.strip()
@@ -379,11 +379,11 @@ class WindowsController(Controller):
             if pid is None:
                 raise RuntimeError("Unable to get PID")
 
-            check_output(["taskkill", "/f", "/pid", pid])
+            _invoke(["taskkill", "/f", "/pid", pid])
         else:
-            check_output([path_join(self.home, "bin", "neo4j.bat"), "stop"])
+            _invoke([path_join(self.home, "bin", "neo4j.bat"), "stop"])
 
-        check_output([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
+        _invoke([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
 
     @classmethod
     def _neo4j_admin_script_name(cls):
@@ -867,6 +867,14 @@ def test():
         if exit_status != 0:
             break
     exit(exit_status)
+
+
+def _invoke(command):
+    try:
+        return check_output(command)
+    except CalledProcessError as error:
+        print("Command failed.\r\nError code: %s\r\nOutput:\r\n%s\n\r" % (str(error.returncode), error.output))
+        raise
 
 
 def _create_controller(path=None):
