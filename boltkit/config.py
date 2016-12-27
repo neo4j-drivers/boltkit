@@ -40,6 +40,10 @@ BOLT_LISTEN_URI_SETTING = "dbms.connector.bolt.listen_address" # setting name st
 
 WINDOWS_SERVICE_NAME_SETTING = "dbms.windows_service_name"
 
+DEFAULT_PAGE_CACHE_MEMORY = "50m"
+DEFAULT_XMS_MEMORY = "300m"
+DEFAULT_XMX_MEMORY = "500m"
+
 
 def update(path, properties):
     config_file_path = _config_file_path(path)
@@ -133,9 +137,9 @@ def extract_windows_service_name(path):
 
 def _memory_config():
     return {
-        "dbms.memory.pagecache.size": "50m",
-        "dbms.memory.heap.initial_size": "250m",
-        "dbms.memory.heap.max_size": "250m"
+        "dbms.memory.pagecache.size": DEFAULT_PAGE_CACHE_MEMORY,
+        "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
+        "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY
     }
 
 
