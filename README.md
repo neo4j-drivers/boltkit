@@ -317,7 +317,7 @@ usage: neoctrl-configure [-h] [-v] [home] key=value [key=value ...]
 Update Neo4j server configuration.
 
 example:
-  neoctrl-configure --disable-auth $HOME/servers/neo4j-community-3.0.0
+  neoctrl-configure . dbms.security.auth_enabled=false
 
 positional arguments:
   home           Neo4j server directory (default: .)
@@ -373,7 +373,8 @@ Report bugs to drivers@neo4j.com
 ### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster install` 
 ```
 usage: neoctrl-cluster install [-h] [-v] [-c CORE_COUNT]
-                               [-r READ_REPLICA_COUNT] -p PASSWORD
+                               [-r READ_REPLICA_COUNT] [-i INITIAL_PORT] -p
+                               PASSWORD
                                version [path]
 
 Download, extract and configure causal cluster
@@ -392,6 +393,10 @@ optional arguments:
                         Number of core members in the cluster (default 3)
   -r READ_REPLICA_COUNT, --read-replicas READ_REPLICA_COUNT
                         Number of read replicas in the cluster (default 0)
+  -i INITIAL_PORT, --initial-port INITIAL_PORT
+                        Initial port number for all used ports on all cluster
+                        members. Each next port will simply be an increment of
+                        the previous one (default 20000)
   -p PASSWORD, --password PASSWORD
                         initial password of the initial admin user ('neo4j')
                         for all cluster members
@@ -427,7 +432,7 @@ Report bugs to drivers@neo4j.com
 ```
 usage: neoctrl-cluster stop [-h] [-k] [path]
 
-Stop the causal cluster located at the given path.
+Stop the causal cluster located at the given path
 
 example:
   neoctrl-cluster stop $HOME/cluster/
@@ -438,27 +443,6 @@ positional arguments:
 optional arguments:
   -h, --help  show this help message and exit
   -k, --kill  forcefully kill all instances in the cluster
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-
-### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster set-initial-password` 
-```
-usage: neoctrl-cluster set-initial-password [-h] password [path]
-
-Sets the initial password of the initial admin user ('neo4j') for all cluster members
-
-example:
-  neoctrl-set-initial-password newPassword $HOME/cluster/
-
-positional arguments:
-  password    password for the admin user
-  path        causal cluster location path (default: .)
-
-optional arguments:
-  -h, --help  show this help message and exit
 
 See neoctrl-download for details of supported environment variables.
 
