@@ -164,7 +164,7 @@ class Downloader(object):
         return package
 
 
-def wait_for_server(host, port, timeout=30):
+def wait_for_server(host, port, timeout=90):
     port = port or 7474
     running = False
     t = 0
@@ -675,8 +675,8 @@ def cluster():
                                          "  neoctrl-cluster start $HOME/cluster/",
                                          formatter_class=RawDescriptionHelpFormatter)
 
-    parser_start.add_argument("-t", "--timeout", default="120", dest="timeout",
-                              help="startup timeout in seconds (default: 120)")
+    parser_start.add_argument("-t", "--timeout", default="180", dest="timeout",
+                              help="startup timeout in seconds (default: 180)")
 
     parser_start.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
