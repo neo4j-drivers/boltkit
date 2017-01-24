@@ -224,8 +224,11 @@ class StubServer(Thread):
         peers, self.peers, self.running = list(self.peers.items()), {}, False
         for sock, peer in peers:
             log.info("~~ <CLOSE> \"%s\" %d", *peer.address)
-            sock.shutdown(SHUT_RDWR)
-            sock.close()
+            try:
+                sock.shutdown(SHUT_RDWR)
+                sock.close()
+            except socket_error:
+                pass
 
     def read(self, sock):
         try:
@@ -318,7 +321,7 @@ class StubServer(Thread):
     def send_bytes(self, sock, data):
         try:
             sock.sendall(data)
-        except socket_error as error:
+        except socket_error:
             log.error("S: <GONE>")
             exit(1)
         else:
