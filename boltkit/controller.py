@@ -67,10 +67,16 @@ class Downloader(object):
         if self.verbose:
             stderr.write(message)
 
-    def download_build(self, address, build_id, package):
+    def download_nightly_build(self, major, minor, edition, package_format):
+        package = "neo4j-%s-%s.%s-NIGHTLY-%s" % (edition, major, minor, package_format)
+        package = self.download_build(package)
+        self.write("\r\n")
+        return package
+
+    def download_build(self, package):
         """ Download from TeamCity build server.
         """
-        url = "https://%s/repository/download/%s/.lastSuccessful/%s" % (address, build_id, package)
+        url = path_join(getenv("TEAMCITY_HOST"), package)
         user = getenv("TEAMCITY_USER")
         password = getenv("TEAMCITY_PASSWORD")
         auth_token = b"Basic " + b64encode(("%s:%s" % (user, password)).encode("iso-8859-1"))
@@ -125,7 +131,11 @@ class Downloader(object):
 
     def download(self, edition, version, package_format):
         version_parts = version.replace("-", ".").replace("_", ".").split(".")
-        if len(version_parts) == 3:
+
+        if len(version_parts) == 2:
+            major, minor = version_parts
+            return self.download_nightly_build(major, minor, edition, package_format)
+        elif len(version_parts) == 3:
             major, minor, patch = version_parts
             milestone = ""
             tag = ""
@@ -150,15 +160,7 @@ class Downloader(object):
         package = template % (edition, package_version, package_format)
 
         dist_address = getenv("DIST_HOST", DIST_HOST)
-        build_address = getenv("TEAMCITY_HOST")
-        if build_address:
-            try:
-                build_id = "Neo4j%s%s_Packaging" % (major, minor)
-                package = self.download_build(build_address, build_id, package)
-            except HTTPError:
-                package = self.download_dist(dist_address, package)
-        else:
-            package = self.download_dist(dist_address, package)
+        package = self.download_dist(dist_address, package)
         self.write("\r\n")
 
         return package
