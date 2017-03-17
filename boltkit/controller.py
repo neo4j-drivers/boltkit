@@ -76,7 +76,7 @@ class Downloader(object):
     def download_build(self, package):
         """ Download from TeamCity build server.
         """
-        url = path_join(getenv("TEAMCITY_HOST"), package)
+        url = getenv("TEAMCITY_HOST") + "/" + package
         user = getenv("TEAMCITY_USER")
         password = getenv("TEAMCITY_PASSWORD")
         auth_token = b"Basic " + b64encode(("%s:%s" % (user, password)).encode("iso-8859-1"))
