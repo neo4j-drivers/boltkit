@@ -108,13 +108,15 @@ def for_core(expected_core_cluster_size, initial_discovery_members, discovery_li
     return config
 
 
-def for_read_replica(initial_discovery_members, bolt_listen_address, http_listen_address, https_listen_address):
+def for_read_replica(initial_discovery_members, bolt_listen_address, http_listen_address, https_listen_address,
+                     transaction_listen_address):
     config = {
         "dbms.mode": "READ_REPLICA",
         "causal_clustering.initial_discovery_members": initial_discovery_members,
         "dbms.connector.bolt.listen_address": bolt_listen_address,
         "dbms.connector.http.listen_address": http_listen_address,
-        "dbms.connector.https.listen_address": https_listen_address
+        "dbms.connector.https.listen_address": https_listen_address,
+        "causal_clustering.transaction_listen_address": transaction_listen_address
     }
     config.update(_memory_config())
     return config

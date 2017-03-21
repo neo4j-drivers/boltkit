@@ -480,9 +480,11 @@ class Cluster:
             bolt_listen_address = _localhost(next(port_generator))
             http_listen_address = _localhost(next(port_generator))
             https_listen_address = _localhost(next(port_generator))
+            transaction_listen_address = _localhost(next(port_generator))
 
             read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
-                                                          http_listen_address, https_listen_address)
+                                                          http_listen_address, https_listen_address,
+                                                          transaction_listen_address)
 
             os_dependent_config = controller.os_dependent_config(read_replica_dir)
             read_replica_config.update(os_dependent_config)
