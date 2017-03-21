@@ -71,6 +71,9 @@ def extract_http_and_bolt_uris(path):
     bolt_uri = None
 
     for line in lines:
+        if line.startswith("#"):
+            continue
+
         if HTTP_URI_SETTING in line or HTTP_LISTEN_URI_SETTING in line:
             if http_uri is not None:
                 raise RuntimeError("Duplicated http uri configs found in %s" % config_file_path)

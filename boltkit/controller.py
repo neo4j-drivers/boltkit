@@ -516,15 +516,14 @@ class Cluster:
 
     def _foreach_cluster_root_dir(self, cluster_home_dir, action):
         results = []
-
         cluster_home_dir = path_join(self.path, cluster_home_dir)
         if isdir(cluster_home_dir):
             cluster_member_dirs = listdir(cluster_home_dir)
             for cluster_member_dir in cluster_member_dirs:
-                neo4j_dirs = listdir(path_join(self.path, cluster_home_dir, cluster_member_dir))
+                neo4j_dirs = listdir(path_join(cluster_home_dir, cluster_member_dir))
                 for neo4j_dir in neo4j_dirs:
                     if neo4j_dir.startswith("neo4j"):
-                        neo4j_path = path_join(self.path, cluster_home_dir, cluster_member_dir, neo4j_dir)
+                        neo4j_path = path_join(cluster_home_dir, cluster_member_dir, neo4j_dir)
                         result = action(neo4j_path)
                         results.append(result)
                         break
