@@ -76,9 +76,9 @@ class Downloader(object):
     def download_build(self, package):
         """ Download from TeamCity build server.
         """
-        url = getenv("TEAMCITY_HOST") + "/" + package
-        user = getenv("TEAMCITY_USER")
-        password = getenv("TEAMCITY_PASSWORD")
+        url = get_env_variable_or_raise_error("TEAMCITY_HOST") + "/" + package
+        user = get_env_variable_or_raise_error("TEAMCITY_USER")
+        password = get_env_variable_or_raise_error("TEAMCITY_PASSWORD")
         auth_token = b"Basic " + b64encode(("%s:%s" % (user, password)).encode("iso-8859-1"))
         request = Request(url, headers={"Authorization": auth_token})
         package_path = path_join(self.path, package)
@@ -194,6 +194,13 @@ def user_record(user, password):
     m.update(salt)
     m.update(bstr(password))
     return bstr("%s:SHA-256,%s,%s:" % (user, hex_bytes(m.digest()), hex_bytes(salt)))
+
+
+def get_env_variable_or_raise_error(name):
+    value = getenv(name)
+    if value is None:
+        raise TypeError("Required environment variable is not defined: %s" % name)
+    return value
 
 
 class Controller(object):
@@ -892,7 +899,7 @@ def _parse_int(string_value, message):
 
 
 def _localhost(port):
-    return "localhost:%d" % port
+    return "127.0.0.1:%d" % port
 
 # todo:
 #  - add read replicas dynamically
