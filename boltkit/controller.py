@@ -361,7 +361,11 @@ class WindowsController(Controller):
         from zipfile import ZipFile
         with ZipFile(archive, 'r') as files:
             files.extractall(path)
-            return path_join(path, files.namelist()[0])
+            # take first entry form zip file, it should be something like `neo4j-enterprise-3.0.0/plugins`
+            firstName = files.namelist()[0]
+            # strip off everything except the root path, it should become something like `neo4j-enterprise-3.0.0`
+            rootPath = firstName[0:firstName.find("/")] # ZIP file system always has "/" as separator
+            return path_join(path, rootPath)
 
     @classmethod
     def os_dependent_config(cls, instance_id):
