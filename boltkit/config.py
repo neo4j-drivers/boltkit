@@ -43,6 +43,7 @@ WINDOWS_SERVICE_NAME_SETTING = "dbms.windows_service_name"
 DEFAULT_PAGE_CACHE_MEMORY = "50m"
 DEFAULT_XMS_MEMORY = "300m"
 DEFAULT_XMX_MEMORY = "500m"
+DEFAULT_BOOKMARK_READY_TIMEOUT = "5s"
 
 
 def update(path, properties):
@@ -104,7 +105,7 @@ def for_core(expected_core_cluster_size, initial_discovery_members, discovery_li
         "dbms.connector.http.listen_address": http_listen_address,
         "dbms.connector.https.listen_address": https_listen_address
     }
-    config.update(_memory_config())
+    config.update(_common_config())
     return config
 
 
@@ -118,7 +119,7 @@ def for_read_replica(initial_discovery_members, bolt_listen_address, http_listen
         "dbms.connector.https.listen_address": https_listen_address,
         "causal_clustering.transaction_listen_address": transaction_listen_address
     }
-    config.update(_memory_config())
+    config.update(_common_config())
     return config
 
 
@@ -140,11 +141,12 @@ def extract_windows_service_name(path):
     return service_name
 
 
-def _memory_config():
+def _common_config():
     return {
         "dbms.memory.pagecache.size": DEFAULT_PAGE_CACHE_MEMORY,
         "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
-        "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY
+        "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY,
+        "dbms.transaction.bookmark_ready_timeout": DEFAULT_BOOKMARK_READY_TIMEOUT
     }
 
 
