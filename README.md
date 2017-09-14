@@ -204,6 +204,7 @@ Download a Neo4j server package for the current platform.
 
 example:
   neoctrl-download -e 3.1.0-M09 $HOME/servers/
+  neoctrl-download -e 3.3 $HOME/servers/
 
 positional arguments:
   version           Neo4j server version
@@ -216,13 +217,15 @@ optional arguments:
 
 environment variables:
   DIST_HOST         name of distribution server (default: dist.neo4j.org)
-  TEAMCITY_HOST     name of build server (optional)
-  TEAMCITY_USER     build server user name (optional)
-  TEAMCITY_PASSWORD build server password (optional)
+  TEAMCITY_HOST     name of build server
+  TEAMCITY_USER     build server user name
+  TEAMCITY_PASSWORD build server password
+  AWS_ACCESS_KEY_ID aws access key id
+  AWS_SECRET_ACCESS_KEY aws secret access key
 
-If TEAMCITY_* environment variables are set, the build server will be checked
-for the package before the distribution server. Note that supplying a local
-alternative DIST_HOST can help reduce test timings on a slow network.
+
+TEAMCITY_* environment variables are required to download snapshot servers.
+AWS_* environment variables are used to access enterprise distribution servers.
 
 Report bugs to drivers@neo4j.com
 ```

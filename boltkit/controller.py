@@ -33,6 +33,10 @@ from subprocess import call, check_output, CalledProcessError
 from sys import stderr, stdin
 from time import sleep
 
+import boto
+from boto.s3.key import Key
+from boto.s3.connection import OrdinaryCallingFormat
+
 import boltkit.config as config
 
 try:
@@ -41,7 +45,6 @@ try:
 except ImportError:
     from urllib2 import urlopen, Request, HTTPError
     from urlparse import urlparse
-
 
 DIST_HOST = "dist.neo4j.org"
 
@@ -103,10 +106,42 @@ class Downloader(object):
 
         return package_path
 
-    def download_dist(self, address, package):
+    def download_s3(self, package):
+        """ Download from private s3 distributions.
+        """
+        package_path = path_join(self.path, package)
+        aws_access_key_id = get_env_variable_or_raise_error("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = get_env_variable_or_raise_error("AWS_SECRET_ACCESS_KEY")
+
+        bucket_name = getenv("BUCKET", DIST_HOST)
+        # connect to the bucket
+        conn = boto.s3.connect_to_region(
+            "eu-west-1",
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            is_secure=True,
+            calling_format=OrdinaryCallingFormat()
+        )
+        bucket = conn.get_bucket(bucket_name)
+        # Get the Key object of the given key, in the bucket
+        k = Key(bucket, package)
+
+        # Ensure the destination exist
+        try:
+            makedirs(self.path)
+        except OSError:
+            pass
+        self.write("Downloading from aws bucket %s... " % bucket_name)
+
+        # Get the contents of the key into a file
+        k.get_contents_to_filename(package_path)
+        return package_path
+
+    def download_dist(self, package):
         """ Download from public distributions.
         """
-        url = "http://%s/%s" % (address, package)
+        dist_address = getenv("DIST_HOST", DIST_HOST)
+        url = "http://%s/%s" % (dist_address, package)
         package_path = path_join(self.path, package)
 
         self.write("Downloading dist from %s... " % url)
@@ -159,8 +194,7 @@ class Downloader(object):
             raise ValueError("Unknown format %r" % package_format)
         package = template % (edition, package_version, package_format)
 
-        dist_address = getenv("DIST_HOST", DIST_HOST)
-        package = self.download_dist(dist_address, package)
+        package = self.download_s3(package) if edition == "enterprise" else self.download_dist(package)
         self.write("\r\n")
 
         return package
@@ -567,16 +601,17 @@ def download():
                     "example:\r\n"
                     "  neoctrl-download -e 3.1.0-M09 $HOME/servers/",
         epilog="environment variables:\r\n"
-               "  DIST_HOST         name of distribution server (default: %s)\r\n"
-               "  TEAMCITY_HOST     name of build server (optional)\r\n"
-               "  TEAMCITY_USER     build server user name (optional)\r\n"
-               "  TEAMCITY_PASSWORD build server password (optional)\r\n"
+               "  DIST_HOST         name of distribution server (default: dist.neo4j.org)"
+               "  TEAMCITY_HOST     name of build server\r\n"
+               "  TEAMCITY_USER     build server user name\r\n"
+               "  TEAMCITY_PASSWORD build server password\r\n"
+               "  AWS_ACCESS_KEY_ID aws access key id\r\n"
+               "  AWS_SECRET_ACCESS_KEY aws secret access key\r\n"
                "\r\n"
-               "If TEAMCITY_* environment variables are set, the build server will be checked\r\n"
-               "for the package before the distribution server. Note that supplying a local\r\n"
-               "alternative DIST_HOST can help reduce test timings on a slow network.\r\n"
+               "TEAMCITY_* environment variables are required to download snapshot servers.\r\n"
+               "AWS_* environment variables are used to access enterprise distribution servers.\r\n"
                "\r\n"
-               "Report bugs to drivers@neo4j.com" % (DIST_HOST,),
+               "Report bugs to drivers@neo4j.com",
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-e", "--enterprise", action="store_true",
                         help="select Neo4j Enterprise Edition (default: Community)")
