@@ -20,7 +20,7 @@
 
 from __future__ import print_function
 
-from os.path import join as path_join
+from os.path import join as path_join, isfile as path_is_file
 
 try:
     from urllib.request import urlopen, Request, HTTPError
@@ -31,6 +31,7 @@ except ImportError:
 
 CONF_DIR = "conf"
 CONF_FILE = "neo4j.conf"
+WRAPPER_CONF_FILE = "neo4j-wrapper.conf"
 
 HTTP_URI_SETTING = "dbms.connector.http.address" # setting name for 3.0
 HTTP_LISTEN_URI_SETTING = "dbms.connector.http.listen_address" # setting name starting from 3.1
@@ -124,9 +125,24 @@ def for_read_replica(initial_discovery_members, bolt_listen_address, http_listen
 
 
 def extract_windows_service_name(path):
+    # first try to extract from neo4j.conf
     config_file_path = _config_file_path(path)
+    windows_service_name = _extract_windows_service_name_from(config_file_path)
+    if windows_service_name is None:
+        # unable to extract from neo4j.conf, maybe we need to try neo4j-wrapper.conf?
+        wrapper_config_file_path = _wrapper_config_file_path(path)
+        if path_is_file(wrapper_config_file_path):
+            # neo4j-wrapper.conf exists, try to extract windows service name from there
+            windows_service_name = _extract_windows_service_name_from(wrapper_config_file_path)
 
-    with open(config_file_path, "r") as f_in:
+    if windows_service_name is None:
+        raise RuntimeError("Unable to extract windows service name from %s" % path)
+
+    return windows_service_name
+
+
+def _extract_windows_service_name_from(config_file):
+    with open(config_file, "r") as f_in:
         lines = f_in.readlines()
 
     service_name = None
@@ -134,7 +150,7 @@ def extract_windows_service_name(path):
     for line in lines:
         if WINDOWS_SERVICE_NAME_SETTING in line:
             if service_name is not None:
-                raise RuntimeError("Duplicated windows service name configs found in %s" % config_file_path)
+                raise RuntimeError("Duplicated windows service name configs found in %s" % config_file)
 
             service_name = line.partition("=")[-1].strip()
 
@@ -169,3 +185,7 @@ def _parse_uri(scheme, config_entry):
 
 def _config_file_path(root):
     return path_join(root, CONF_DIR, CONF_FILE)
+
+
+def _wrapper_config_file_path(root):
+    return path_join(root, CONF_DIR, WRAPPER_CONF_FILE)
