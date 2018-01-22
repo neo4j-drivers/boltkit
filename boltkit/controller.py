@@ -939,6 +939,3 @@ def _parse_int(string_value, message):
 
 def _localhost(port):
     return "127.0.0.1:%d" % port
-
-# todo:
-#  - add read replicas dynamically

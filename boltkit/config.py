@@ -88,8 +88,8 @@ def extract_http_and_bolt_uris(path):
 
             bolt_uri = _parse_uri("bolt", line)
 
-    return (http_uri or urlparse("http://localhost:7474"),
-            bolt_uri or urlparse("bolt://localhost:7687"))
+    return (http_uri or urlparse("http://127.0.0.1:7474"),
+            bolt_uri or urlparse("bolt://127.0.0.1:7687"))
 
 
 def for_core(expected_core_cluster_size, initial_discovery_members, discovery_listen_address,
@@ -162,7 +162,8 @@ def _common_config():
         "dbms.memory.pagecache.size": DEFAULT_PAGE_CACHE_MEMORY,
         "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
         "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY,
-        "dbms.transaction.bookmark_ready_timeout": DEFAULT_BOOKMARK_READY_TIMEOUT
+        "dbms.transaction.bookmark_ready_timeout": DEFAULT_BOOKMARK_READY_TIMEOUT,
+        "dbms.connectors.default_advertised_address": "127.0.0.1"
     }
 
 
@@ -170,7 +171,7 @@ def _parse_uri(scheme, config_entry):
     uri = config_entry.partition("=")[-1].strip()
 
     if uri.startswith(":"):
-        uri = scheme + "://localhost" + uri
+        uri = scheme + "://127.0.0.1" + uri
 
     if not uri.startswith(scheme + "://"):
         uri = scheme + "://" + uri
