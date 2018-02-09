@@ -37,7 +37,7 @@ from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
 
-from .driver import h, UINT_16, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSION
+from .driver import h, UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSION
 from.watcher import watch
 
 
@@ -259,9 +259,18 @@ class StubServer(Thread):
             self.stop()
             return
         raw_data = sock.recv(16)
-        # TODO: proper version negotiation
-        log.info("C: <VERSION> %s" % h(raw_data))
-        response = raw_data[0:4]
+        suggested_version_1, = raw_unpack(INT_32, raw_data, 0)
+        suggested_version_2, = raw_unpack(INT_32, raw_data, 4)
+        suggested_version_3, = raw_unpack(INT_32, raw_data, 8)
+        suggested_version_4, = raw_unpack(INT_32, raw_data, 12)
+        suggested_versions = [suggested_version_1,suggested_version_2,suggested_version_3,suggested_version_4]
+        log.info("C: <VERSION> %s %s" % (h(raw_data), suggested_versions))
+
+        if BOLT_VERSION not in suggested_versions:
+            raise RuntimeError("Only protocol version %s is supported, suggested %s" % (BOLT_VERSION, suggested_versions))
+
+        # only single protocol version is currently supported
+        response = raw_pack(INT_32, BOLT_VERSION)
         log.info("S: <VERSION> %d" % BOLT_VERSION)
         sock.send(response)
         self.peers[sock].version = 1
