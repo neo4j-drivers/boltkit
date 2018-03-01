@@ -165,6 +165,12 @@ class Downloader(object):
         return package_path
 
     def download(self, edition, version, package_format):
+        existing_package = getenv("NEOCTRL_LOCAL_PACKAGE", None)
+        if existing_package is not None:
+            if isfile(existing_package):
+                return existing_package
+            raise RuntimeError("Unable to locate existing package at %s" % existing_package)
+
         version_parts = version.replace("-", ".").replace("_", ".").split(".")
 
         if len(version_parts) == 2:
