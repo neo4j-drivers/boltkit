@@ -163,7 +163,8 @@ def _common_config():
         "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
         "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY,
         "dbms.transaction.bookmark_ready_timeout": DEFAULT_BOOKMARK_READY_TIMEOUT,
-        "dbms.connectors.default_advertised_address": "127.0.0.1"
+        "dbms.connectors.default_advertised_address": "127.0.0.1",
+        "dbms.backup.enabled": "false"
     }
 
 
