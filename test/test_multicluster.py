@@ -24,13 +24,24 @@ from boltkit.multicluster import parse_args, parse_install_command
 
 class ConnectionTestCase(TestCase):
 
+
+    def test_parse_args_in_any_order(self):
+        parsed = parse_args(["install", "3.4.0", "-p", "pAssw0rd", "-v",
+                             "-d" "{\"london\": {\"c\": 3, \"r\": 2}, \"malmo\": {\"c\": 5, \"i\": 9001}}",
+                             "--path", "$HOME/multi-cluster/"])
+        assert parsed.path == "$HOME/multi-cluster/"
+
+    def test_parse_args_with_default(self):
+        parsed = parse_args(["install", "3.4.0", "-p", "pAssw0rd", "-v",
+                             "-d" "{\"london\": {\"c\": 3, \"r\": 2}, \"malmo\": {\"c\": 5, \"i\": 9001}}"])
+        assert parsed.path == "."
+
     def test_parse_install_args(self):
-        parsed = parse_args(["install", "3.4.0", "$HOME/multi-cluster/", "-p", "pAssw0rd", "-v",
+        parsed = parse_args(["install", "3.4.0", "--path", "$HOME/multi-cluster/", "-p", "pAssw0rd", "-v",
                              "-d" "{\"london\": {\"c\": 3, \"r\": 2}, \"malmo\": {\"c\": 5, \"i\": 9001}}"])
         installed = parse_install_command(parsed)
         expected = {u"london":
                         {"verbose": True,
-                         "name": u"london",
                          "version": "3.4.0",
                          "read_replica_count": 2,
                          "initial_port": 20000,
@@ -38,7 +49,6 @@ class ConnectionTestCase(TestCase):
                          "core_count": 3},
                     u"malmo":
                         {"verbose": True,
-                         "name": u"malmo",
                          "version": "3.4.0",
                          "read_replica_count": 0,
                          "initial_port": 9001,
@@ -48,12 +58,11 @@ class ConnectionTestCase(TestCase):
         self.assertDictEqual(installed, expected)
 
     def test_parse_empty_database_args(self):
-        parsed = parse_args(["install", "3.4.0", "$HOME/multi-cluster/", "-p", "pAssw0rd",
+        parsed = parse_args(["install", "3.4.0", "--path","$HOME/multi-cluster/", "-p", "pAssw0rd",
                              "-d" "{\"london\":{}, \"malmo\": {}}"])
         installed = parse_install_command(parsed)
         expected = {u"london":
                         {"verbose": False,
-                         "name": u"london",
                          "version": "3.4.0",
                          "read_replica_count": 0,
                          "initial_port": 20000,
@@ -61,7 +70,6 @@ class ConnectionTestCase(TestCase):
                          "core_count": 3},
                     u"malmo":
                         {"verbose": False,
-                         "name": u"malmo",
                          "version": "3.4.0",
                          "read_replica_count": 0,
                          "initial_port": 20100,

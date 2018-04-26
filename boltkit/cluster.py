@@ -4,7 +4,7 @@ from itertools import count
 from os import listdir
 from os.path import join as path_join, realpath
 from urllib2 import HTTPError
-
+from sys import stderr
 from boltkit import config as config
 from boltkit.controller import create_controller, wait_for_server
 
@@ -39,7 +39,7 @@ class Cluster:
             else:
                 raise
 
-    def start(self, timeout):
+    def start(self, timeout, verbose=False):
         member_info_array = self._foreach_cluster_member(self._cluster_member_start)
 
         for member_info in member_info_array:
@@ -183,17 +183,17 @@ def cluster():
                                            description=
                                            sub_commands_with_description["install"] +
                                            "\r\n\r\nexample:\r\n"
-                                           "  neoctrl-cluster install [-v] 3.1.0 [-c 3] -p pAssw0rd $HOME/cluster/",
+                                           "  neoctrl-cluster install [-v] [-c 3] -p pAssw0rd 3.1.0 $HOME/cluster/",
                                            formatter_class=RawDescriptionHelpFormatter)
 
     parser_install.add_argument("-v", "--verbose", action="store_true", help="show more detailed output")
     parser_install.add_argument("version", help="Neo4j server version")
     parser_install.add_argument("-c", "--cores", default=3, dest="core_count", type=int,
-                                help="Number of core members in the cluster (default 3)")
+                                help="number of core members in the cluster (default 3)")
     parser_install.add_argument("-r", "--read-replicas", default=0, dest="read_replica_count", type=int,
-                                help="Number of read replicas in the cluster (default 0)")
+                                help="number of read replicas in the cluster (default 0)")
     parser_install.add_argument("-i", "--initial-port", default=DEFAULT_INITIAL_PORT, type=int,
-                                dest="initial_port", help="Initial port number for all used ports on all cluster "
+                                dest="initial_port", help="initial port number for all used ports on all cluster "
                                                           "members. Each next port will simply be an increment of "
                                                           "the previous one (default %d)" % DEFAULT_INITIAL_PORT)
     parser_install.add_argument("-p", "--password", required=True,
