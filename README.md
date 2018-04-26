@@ -12,13 +12,21 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
   - [Command Line Usage](#stub-bolt-server/command-line-usage)
   - [Java Test Usage](#stub-bolt-server/java-test-usage)
 - [Neo4j Controller](#neo4j-controller)
+- [Single Server](#neo4j-controller)
   - [`neoctrl-download`](#neo4j-controller/download)
   - [`neoctrl-install`](#neo4j-controller/install)
   - [`neoctrl-start`](#neo4j-controller/start)
   - [`neoctrl-stop`](#neo4j-controller/stop)
   - [`neoctrl-create-user`](#neo4j-controller/create-user)
   - [`neoctrl-configure`](#neo4j-controller/configure)
-
+- [Cluster](#neo4j-controller/cluster)
+  - [`neoctrl-cluster install`](#neo4j-controller/cluster-install)
+  - [`neoctrl-cluster start`](#neo4j-controller/cluster-start)
+  - [`neoctrl-cluster stop`](#neo4j-controller/cluster-stop)
+- [Multi-Cluster](#neo4j-controller/multicluster)
+  - [`neoctrl-multicluster install`](#neo4j-controller/multicluster-install)
+  - [`neoctrl-multicluster start`](#neo4j-controller/multicluster-start)
+  - [`neoctrl-multicluster stop`](#neo4j-controller/multicluster-stop)
 ----
 
 
@@ -190,13 +198,15 @@ public void shouldBeAbleRunCypher() throws StubServer.ForceKilled, InterruptedEx
 ## <a name="neo4j-controller"></a>Neo4j Controller 
 
 The Neo4j controller module comprises a set of scripts for downloading, starting, stopping and configuring Neo4j servers.
-These scripts should work for any 3.0+ server version and can pull builds from TeamCity if credentials are supplied.
-In this case, the download is attempted from TeamCity first and the regular distribution server is used as a fallback.
+These scripts should work for any 3.0+ server version and can pull artifacts from local file system, TeamCity and AWS server (credentials might be required).
 
-Module also contains `neoctrl-cluster` command that gives ability to install, start and stop Neo4j Causal clusters.
-It is supported for 3.1+ Neo4j versions only.
+Module also contains `neoctrl-cluster` and `neoctrl-multicluster` commands that give ability to install, start and stop Neo4j Causal clusters and Neo4j Multi-clusters.
+Neo4j cluster commands support 3.1+ enterprise Neo4j versions only.
+And Neo4j multi-cluster commands support 3.4+ enterprise Neo4j versions only.
 
-### `neoctrl-download` <a name="neo4j-controller/download"></a>
+### <a name="neo4j-controller/single-instance"></a>Standalone Server
+
+#### `neoctrl-download` <a name="neo4j-controller/download"></a>
 ```
 usage: neoctrl-download [-h] [-e] [-v] version [path]
 
@@ -222,6 +232,7 @@ environment variables:
   TEAMCITY_PASSWORD build server password
   AWS_ACCESS_KEY_ID aws access key id
   AWS_SECRET_ACCESS_KEY aws secret access key
+  NEOCTRL_LOCAL_PACKAGE local package source is always preferred if configured
 
 
 TEAMCITY_* environment variables are required to download snapshot servers.
@@ -230,7 +241,7 @@ AWS_* environment variables are used to access enterprise distribution servers.
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/install"></a>`neoctrl-install` 
+#### <a name="neo4j-controller/install"></a>`neoctrl-install`
 ```
 usage: neoctrl-install [-h] [-e] [-v] version [path]
 
@@ -253,7 +264,7 @@ See neoctrl-download for details of supported environment variables.
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/start"></a>`neoctrl-start` 
+#### <a name="neo4j-controller/start"></a>`neoctrl-start`
 ```
 usage: neoctrl-start [-h] [-v] [home]
 
@@ -272,7 +283,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/stop"></a>`neoctrl-stop` 
+#### <a name="neo4j-controller/stop"></a>`neoctrl-stop`
 ```
 usage: neoctrl-stop [-h] [-v] [-k] [home]
 
@@ -292,7 +303,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/create-user"></a>`neoctrl-create-user` 
+#### <a name="neo4j-controller/create-user"></a>`neoctrl-create-user`
 ```
 usage: neoctrl-create-user [-h] [-v] [home] user password
 
@@ -313,7 +324,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/configure"></a>`neoctrl-configure` 
+#### <a name="neo4j-controller/configure"></a>`neoctrl-configure`
 ```
 usage: neoctrl-configure [-h] [-v] [home] key=value [key=value ...]
 
@@ -333,7 +344,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/set-initial-password"></a>`neoctrl-set-initial-password` 
+#### <a name="neo4j-controller/set-initial-password"></a>`neoctrl-set-initial-password`
 ```
 usage: neoctrl-set-initial-password [-h] password [home]
 
@@ -352,7 +363,7 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster` 
+### <a name="neo4j-controller/cluster"></a>Cluster
 ```
 usage: neoctrl-cluster [-h] {install,start,stop} ...
 
@@ -373,17 +384,17 @@ See neoctrl-download for details of supported environment variables.
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster install` 
+#### <a name="neo4j-controller/cluster-install"></a>`neoctrl-cluster install`
 ```
 usage: neoctrl-cluster install [-h] [-v] [-c CORE_COUNT]
-                               [-r READ_REPLICA_COUNT] [-i INITIAL_PORT] -p
-                               PASSWORD
+                               [-r READ_REPLICA_COUNT] [-i INITIAL_PORT]
+                               -p PASSWORD
                                version [path]
 
 Download, extract and configure causal cluster
 
 example:
-  neoctrl-cluster install [-v] 3.1.0 3 $HOME/cluster/
+  neoctrl-cluster install [-v] [-c 3] -p init_password 3.1.0 $HOME/cluster/
 
 positional arguments:
   version               Neo4j server version
@@ -393,23 +404,23 @@ optional arguments:
   -h, --help            show this help message and exit
   -v, --verbose         show more detailed output
   -c CORE_COUNT, --cores CORE_COUNT
-                        Number of core members in the cluster (default 3)
+                        number of core members in the cluster (default 3)
   -r READ_REPLICA_COUNT, --read-replicas READ_REPLICA_COUNT
-                        Number of read replicas in the cluster (default 0)
+                        number of read replicas in the cluster (default 0)
   -i INITIAL_PORT, --initial-port INITIAL_PORT
-                        Initial port number for all used ports on all cluster
+                        initial port number for all used ports on all cluster
                         members. Each next port will simply be an increment of
                         the previous one (default 20000)
   -p PASSWORD, --password PASSWORD
                         initial password of the initial admin user ('neo4j')
-                        for all cluster members
+                        for all cluster members (always required)
 
 See neoctrl-download for details of supported environment variables.
 
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster start` 
+#### <a name="neo4j-controller/cluster-start"></a>`neoctrl-cluster start`
 ```
 usage: neoctrl-cluster start [-h] [-t TIMEOUT] [path]
 
@@ -431,7 +442,7 @@ See neoctrl-download for details of supported environment variables.
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/cluster"></a>`neoctrl-cluster stop` 
+#### <a name="neo4j-controller/cluster-stop"></a>`neoctrl-cluster stop`
 ```
 usage: neoctrl-cluster stop [-h] [-k] [path]
 
@@ -446,6 +457,103 @@ positional arguments:
 optional arguments:
   -h, --help  show this help message and exit
   -k, --kill  forcefully kill all instances in the cluster
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
+### <a name="neo4j-controller/multicluster"></a>Multi-Cluster
+```
+usage: neoctrl-multicluster [-h] {install,start,stop} ...
+
+Operate Neo4j multi-cluster.
+
+optional arguments:
+  -h, --help            show this help message and exit
+
+available sub-commands:
+  start                 Start the multi-cluster located at the given path
+  stop                  Stop the multi-cluster located at the given path
+  install               Download, extract and configure multi-cluster
+
+  {install,start,stop}  Commands are available
+
+See neoctrl-download for details of supported environment variables.
+```
+#### <a name="neo4j-controller/multicluster-install"></a>`neoctrl-multicluster install`
+```
+usage: neoctrl-multicluster install [-h] [--path PATH] -p PASSWORD [-v] -d
+                                    DATABASE
+                                    version
+
+Download, install and configure multi-cluster
+
+Example:
+  neoctrl-multicluster install 3.4.0 [--path $HOME/multi-cluster/] -p pAssw0rd [-v] -d '{"london": {"c": 3, "r": 2}, "malmo": {"c": 5, "i": 9001}}'
+
+positional arguments:
+  version               Neo4j server version
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --path PATH           download destination path (default: .)
+  -p PASSWORD, --password PASSWORD
+                        initial password of the initial admin user ('neo4j')
+                        for all cluster members
+  -v, --verbose         show more detailed output
+  -d DATABASE, --database DATABASE
+                        a json string describing the multi-cluster structure
+                        in the form of {database_name: {c:core_size,
+                        r:read_replica_size, i:initial_port},...} defaults:
+                        core_size=3, read_replia_size=0, initial_port=20000
+                        e.g. '{"london": {"c": 3, "r": 2}, "malmo": {"c": 5,
+                        "i": 9001}}'
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+#### <a name="neo4j-controller/multicluster-start"></a>`neoctrl-multicluster start`
+```
+usage: neoctrl-multicluster start [-h] [-v] [-t TIMEOUT] [path]
+
+Start the multi-cluster located at the given path
+
+example:
+  neoctrl-multicluster start [-v] $HOME/cluster/
+
+positional arguments:
+  path                  multi-cluster location path (default: .)
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --verbose         show more detailed output
+  -t TIMEOUT, --timeout TIMEOUT
+                        startup timeout for each cluster inside the
+                        multicluster in seconds (default: 180)
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+#### <a name="neo4j-controller/multicluster-stop"></a>`neoctrl-multicluster stop`
+```
+usage: neoctrl-multicluster stop [-h] [-v] [-k] [path]
+
+Stop the multi-cluster located at the given path
+
+example:
+  neoctrl-multicluster stop [-v] $HOME/cluster/
+
+positional arguments:
+  path           multi-cluster location path (default: .)
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
+  -k, --kill     forcefully kill all instances in the multi-cluster. Default:
+                 false
 
 See neoctrl-download for details of supported environment variables.
 
