@@ -28,7 +28,7 @@ from os import getenv, makedirs
 from os.path import join as path_join, normpath, realpath, isfile, getsize
 from random import randint
 from socket import create_connection
-from subprocess import call, check_output, CalledProcessError
+from subprocess import call, CalledProcessError, check_call
 from sys import stderr, stdin
 from time import sleep
 
@@ -681,7 +681,7 @@ def test():
 
 def _invoke(command):
     try:
-        return check_output(command)
+        return check_call(" ".join(command), shell=True)
     except CalledProcessError as error:
         print("Command failed.\r\nError code: %s\r\nOutput:\r\n%s\n\r" % (str(error.returncode), error.output))
         raise
