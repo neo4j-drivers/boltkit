@@ -225,7 +225,7 @@ def user_record(user, password):
     m = sha256()
     m.update(salt)
     m.update(bstr(password))
-    return bstr(user) + b":SHA-256," + bstr(hex_bytes(m.digest())) + b"," + bstr(hex_bytes(salt)) + b":"
+    return bstr(user) + b":SHA-256," + hex_bytes(m.digest()) + b"," + hex_bytes(salt) + b":"
 
 
 def get_env_variable_or_raise_error(name):
