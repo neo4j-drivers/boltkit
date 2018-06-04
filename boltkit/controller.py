@@ -225,7 +225,7 @@ def user_record(user, password):
     m = sha256()
     m.update(salt)
     m.update(bstr(password))
-    return bstr("%s:SHA-256,%s,%s:" % (user, hex_bytes(m.digest()), hex_bytes(salt)))
+    return bstr(user) + b":SHA-256," + bstr(hex_bytes(m.digest())) + b"," + bstr(hex_bytes(salt)) + b":"
 
 
 def get_env_variable_or_raise_error(name):
@@ -610,9 +610,7 @@ def create_user():
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    user = parsed.user.encode(stdin.encoding or "utf-8")
-    password = parsed.password.encode(stdin.encoding or "utf-8")
-    controller.create_user(user, password)
+    controller.create_user(parsed.user, parsed.password)
 
 
 def configure():
