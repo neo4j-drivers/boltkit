@@ -27,7 +27,7 @@ except ImportError:
 packages = find_packages(exclude=("test", "test.*"))
 package_metadata = {
     "name": "boltkit",
-    "version": "1.0.30",
+    "version": "1.0.31",
     "description": "Toolkit for Neo4j 3.0+ driver authors",
     "author": "Neo Technology",
     "author_email": "drivers@neo4j.com",
@@ -61,6 +61,7 @@ package_metadata = {
         "Programming Language :: Python :: 3.3",
         "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
         "Topic :: Database",
         "Topic :: Software Development",
     ],
