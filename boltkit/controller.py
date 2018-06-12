@@ -216,7 +216,7 @@ def wait_for_server(host, port, timeout=90):
         raise RuntimeError("Server %s:%d did not become available in %d seconds" % (host, port, timeout))
 
 
-def hex_bytes(data):
+def hex_bytes_str(data):
     return "".join("%02X" % b for b in bytearray(data))
 
 
@@ -225,8 +225,7 @@ def user_record(user, password):
     m = sha256()
     m.update(salt)
     m.update(bstr(password))
-    return bstr(user) + b":SHA-256," + hex_bytes(m.digest()) + b"," + hex_bytes(salt) + b":"
-
+    return b"".join([bstr(user), b":SHA-256,", bstr(hex_bytes_str(m.digest())), b",", bstr(hex_bytes_str(salt)), b":"])
 
 def get_env_variable_or_raise_error(name):
     value = getenv(name)
