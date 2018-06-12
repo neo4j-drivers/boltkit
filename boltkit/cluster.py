@@ -23,10 +23,13 @@ from genericpath import isdir
 from itertools import count
 from os import listdir
 from os.path import join as path_join, realpath
-from urllib2 import HTTPError
-from sys import stderr
 from boltkit import config as config
 from boltkit.controller import create_controller, wait_for_server
+
+try:
+    from urllib.request import HTTPError
+except ImportError:
+    from urllib2 import HTTPError
 
 CORES_DIR = "cores"
 CORE_DIR_FORMAT = "core-%d"
