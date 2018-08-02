@@ -638,8 +638,8 @@ BOLT = b"\x60\x60\xB0\x17"
 # And that's it. If the server responds with anything else, hang up and get in touch. We may have a
 # problem.
 #
-BOLT_VERSION = 1
-RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in [BOLT_VERSION, 0, 0, 0])
+BOLT_VERSIONS = [3, 2, 1, 0]
+RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in BOLT_VERSIONS)
 
 # Messaging
 # ---------
@@ -648,7 +648,8 @@ RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in [BOLT_VER
 # PackStream structure with a unique signature byte.
 #
 # The client sends messages from the selection below:
-CLIENT = {
+CLIENT = [None] * (max(BOLT_VERSIONS) + 1)
+CLIENT[1] = {
     "INIT": 0x01,               # INIT <user_agent> <auth_token>
                                 # -> SUCCESS - connection initialised
                                 # -> FAILURE - init failed, disconnect (reconnect to retry)
@@ -704,14 +705,75 @@ CLIENT = {
                                 #
                                 # TODO
 }
+CLIENT[2] = CLIENT[1]
+CLIENT[3] = {
+    "HELLO": 0x01,              # HELLO <headers>
+                                # -> SUCCESS - connection initialised
+                                # -> FAILURE - init failed, disconnect (reconnect to retry)
+                                #
+                                # Initialisation is carried out once per connection, immediately
+                                # after version negotiation. Before this, no other messages may
+                                # validly be exchanged. INIT bundles with it two pieces of data:
+                                # a user agent string and a map of auth information. More detail on
+                                # on this can be found in the ConnectionSettings class below.
+
+    "GOODBYE": 0x02,            # GOODBYE
+                                # TODO
+
+    "RESET": 0x0F,              # RESET
+                                # -> SUCCESS - connection reset
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # A RESET is used to clear the connection state back to how it was
+                                # immediately following initialisation. Specifically, any
+                                # outstanding failure will be acknowledged, any result stream will
+                                # be discarded and any transaction will be rolled back. This is
+                                # used primarily by the connection pool.
+
+    "RUN": 0x10,                # RUN <statement> <parameters>
+                                # -> SUCCESS - statement accepted
+                                # -> FAILURE - statement not accepted
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # RUN is used to execute a Cypher statement and is paired with
+                                # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
+                                # results respectively.
+                                # TODO
+
+    "BEGIN": 0x11,              # BEGIN
+                                # TODO
+
+    "COMMIT": 0x12,             # COMMIT
+                                # TODO
+
+    "ROLLBACK": 0x13,           # ROLLBACK
+                                # TODO
+
+    "DISCARD_ALL": 0x2F,        # DISCARD_ALL
+                                # -> SUCCESS - result discarded
+                                # -> FAILURE - no result to discard
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+
+    "PULL_ALL": 0x3F,           # PULL_ALL
+                                # .. [RECORD*] - zero or more RECORDS may be returned first
+                                # -> SUCCESS - result complete
+                                # -> FAILURE - no result to pull
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+}
 #
 # The server responds with one or more of these for each request:
-SERVER = {
+SERVER = [None] * (max(BOLT_VERSIONS) + 1)
+SERVER[1] = {
     "SUCCESS": 0x70,            # SUCCESS <metadata>
     "RECORD": 0x71,             # RECORD <value>
     "IGNORED": 0x7E,            # IGNORED <metadata>
     "FAILURE": 0x7F,            # FAILURE <metadata>
 }
+SERVER[3] = SERVER[2] = SERVER[1]
 
 DEFAULT_USER_AGENT = u"boltkit/0.0"
 MAX_CHUNK_SIZE = 65535
@@ -747,7 +809,7 @@ def connect(address, connection_settings):
     socket.sendall(BOLT)
 
     # Send details of the protocol versions supported
-    log.info("C: <VERSION> %d", BOLT_VERSION)
+    log.info("C: <VERSION> %r", BOLT_VERSIONS)
     socket.sendall(RAW_BOLT_VERSIONS)
 
     # Handle the handshake response
@@ -755,7 +817,7 @@ def connect(address, connection_settings):
     version, = raw_unpack(UINT_32, raw_version)
     log.info("S: <VERSION> %d", version)
 
-    if version == BOLT_VERSION:
+    if version in BOLT_VERSIONS:
         return Connection(socket, connection_settings)
     else:
         log.error("~~ <CLOSE> Could not negotiate protocol version")
@@ -769,7 +831,7 @@ class ConnectionSettings(object):
         self.user = user
         auth_token = {u"scheme": u"basic", u"principal": user, u"credentials": password}
         self.user_agent = user_agent or DEFAULT_USER_AGENT
-        self.init_request = Request("INIT ...", CLIENT["INIT"], user_agent, auth_token)
+        self.init_request = Request("INIT ...", CLIENT[1]["INIT"], user_agent, auth_token)
 
 
 class Connection(object):
@@ -789,7 +851,7 @@ class Connection(object):
     def add_statement(self, statement, parameters, records=None):
         # returns pair of requests
         self.requests.append(Request("RUN %s %s" % (json_dumps(statement), json_dumps(parameters)),
-                             CLIENT["RUN"], statement, parameters))
+                             CLIENT[1]["RUN"], statement, parameters))
         head = QueryResponse()
         if records is None:
             self.requests.append(DISCARD_ALL_REQUEST)
@@ -904,10 +966,10 @@ class Request(object):
         self.data = packed(message)
 
 
-ACK_FAILURE_REQUEST = Request("ACK_FAILURE", CLIENT["ACK_FAILURE"])
-RESET_REQUEST = Request("RESET", CLIENT["RESET"])
-DISCARD_ALL_REQUEST = Request("DISCARD_ALL", CLIENT["DISCARD_ALL"])
-PULL_ALL_REQUEST = Request("PULL_ALL", CLIENT["PULL_ALL"])
+ACK_FAILURE_REQUEST = Request("ACK_FAILURE", CLIENT[1]["ACK_FAILURE"])
+RESET_REQUEST = Request("RESET", CLIENT[1]["RESET"])
+DISCARD_ALL_REQUEST = Request("DISCARD_ALL", CLIENT[1]["DISCARD_ALL"])
+PULL_ALL_REQUEST = Request("PULL_ALL", CLIENT[1]["PULL_ALL"])
 
 
 class Response(object):
@@ -928,9 +990,9 @@ class Response(object):
         raise Failure(self)
 
     def on_message(self, tag, data=None):
-        if tag == SERVER["SUCCESS"]:
+        if tag == SERVER[1]["SUCCESS"]:
             self.on_success(data)
-        elif tag == SERVER["FAILURE"]:
+        elif tag == SERVER[1]["FAILURE"]:
             self.on_failure(data)
         else:
             raise ProtocolError("Unexpected summary message %s received" % h(tag))
@@ -947,7 +1009,7 @@ class QueryResponse(Response):
         self.metadata = data
 
     def on_message(self, tag, data=None):
-        if tag == SERVER["IGNORED"]:
+        if tag == SERVER[1]["IGNORED"]:
             self.on_ignored(data)
         else:
             super(QueryResponse, self).on_message(tag, data)
@@ -964,7 +1026,7 @@ class QueryStreamResponse(QueryResponse):
         self.records.append(data or [])
 
     def on_message(self, tag, data=None):
-        if tag == SERVER["RECORD"]:
+        if tag == SERVER[1]["RECORD"]:
             self.on_record(data)
         else:
             super(QueryStreamResponse, self).on_message(tag, data)

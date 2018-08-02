@@ -37,9 +37,8 @@ from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
 
-from .driver import h, UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSION
-from.watcher import watch
-
+from .driver import h, UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSIONS as server_known_versions
+from .watcher import watch
 
 TIMEOUT = 30
 
@@ -47,8 +46,8 @@ TIMEOUT = 30
 log = getLogger("boltkit.server")
 
 
-def message_repr(tag, *data):
-    name = next(key for key, value in chain(CLIENT.items(), SERVER.items()) if value == tag)
+def message_repr(v, tag, *data):
+    name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == tag)
     return "%s %s" % (name, " ".join(map(json_dumps, data)))
 
 
@@ -65,13 +64,14 @@ class Item(object):
 
 class Line(Item):
 
-    def __init__(self, line_no, peer, message):
+    def __init__(self, protocol_version, line_no, peer, message):
+        self.protocol_version = protocol_version
         self.line_no = line_no
         self.peer = peer
         self.message = message
 
     def __repr__(self):
-        return "%s: %s" % (self.peer, message_repr(*self.message))
+        return "%s: %s" % (self.peer, message_repr(self.protocol_version, *self.message))
 
 
 class ExitCommand(Item):
@@ -82,6 +82,7 @@ class ExitCommand(Item):
 class Script(object):
 
     def __init__(self, file_name=None):
+        self.protocol_version = 1
         self.auto = []
         self.lines = deque()
         if file_name:
@@ -98,10 +99,11 @@ class Script(object):
 
     def parse_message(self, message):
         tag, _, data = message.partition(" ")
-        if tag in CLIENT:
-            parsed = (CLIENT[tag],)
-        elif tag in SERVER:
-            parsed = (SERVER[tag],)
+        v = self.protocol_version
+        if tag in CLIENT[v]:
+            parsed = (CLIENT[v][tag],)
+        elif tag in SERVER[v]:
+            parsed = (SERVER[v][tag],)
         else:
             raise ValueError("Unknown message type %s" % tag)
         decoder = JSONDecoder()
@@ -143,11 +145,16 @@ class Script(object):
                     command, _, rest = line.partition(" ")
                     if command == "AUTO":
                         self.auto.append(self.parse_message(rest))
+                    if command == "BOLT":
+                        self.protocol_version = int(rest)
+                        if self.protocol_version not in server_known_versions:
+                            raise RuntimeError("Protocol version %r in script %r is not available "
+                                               "in this version of BoltKit" % (self.protocol_version, file_name))
                 elif mode in "CS":
                     if line.startswith("<"):
-                        lines.append(Line(line_no, mode, self.parse_command(line)))
+                        lines.append(Line(self.protocol_version, line_no, mode, self.parse_command(line)))
                     else:
-                        lines.append(Line(line_no, mode, self.parse_message(line)))
+                        lines.append(Line(self.protocol_version, line_no, mode, self.parse_message(line)))
 
     def match_auto_request(self, request):
         for message in self.auto:
@@ -263,19 +270,22 @@ class StubServer(Thread):
         suggested_version_2, = raw_unpack(INT_32, raw_data, 4)
         suggested_version_3, = raw_unpack(INT_32, raw_data, 8)
         suggested_version_4, = raw_unpack(INT_32, raw_data, 12)
-        suggested_versions = [suggested_version_1,suggested_version_2,suggested_version_3,suggested_version_4]
-        log.info("C: <VERSION> %s %s" % (h(raw_data), suggested_versions))
+        client_requested_versions = [suggested_version_1, suggested_version_2, suggested_version_3, suggested_version_4]
+        log.info("C: <VERSION> [0x%08x, 0x%08x, 0x%08x, 0x%08x]" % tuple(client_requested_versions))
 
-        if BOLT_VERSION not in suggested_versions:
-            raise RuntimeError("Only protocol version %s is supported, suggested %s" % (BOLT_VERSION, suggested_versions))
+        v = self.script.protocol_version
+        if v not in client_requested_versions:
+            raise RuntimeError("Script protocol version %r not offered by client" % v)
 
         # only single protocol version is currently supported
-        response = raw_pack(INT_32, BOLT_VERSION)
-        log.info("S: <VERSION> %d" % BOLT_VERSION)
+        response = raw_pack(INT_32, v)
+        log.info("S: <VERSION> 0x%08x" % v)
+        self.peers[sock].version = v
         sock.send(response)
-        self.peers[sock].version = 1
 
     def handle_request(self, sock):
+        v = self.peers[sock].version
+
         chunked_data = b""
         message_data = b""
         chunk_size = -1
@@ -298,24 +308,32 @@ class StubServer(Thread):
 
         if self.script.match_request(request):
             # explicitly matched
-            log.info("C: %s", message_repr(*request))
+            log.info("C: %s", message_repr(v, *request))
         elif self.script.match_auto_request(request):
             # auto matched
-            log.info("C! %s", message_repr(*request))
+            log.info("C! %s", message_repr(v, *request))
         else:
             # not matched
-            log.error("C: %s", message_repr(*request))
+            log.error("C: %s", message_repr(v, *request))
 
         responses = self.script.match_responses()
         if not responses and self.script.match_auto_request(request):
-            responses = [(SERVER["SUCCESS"], {u"fields": []}
-                         if request[0] == CLIENT["RUN"] else {})]
+            try:
+                # This is hard-coded for GOODBYE. Maybe
+                # not very future proof.
+                if request[0] == CLIENT[v]["GOODBYE"]:
+                    log.info("S: <EXIT>")
+                    exit(0)
+            except KeyError:
+                pass
+            responses = [(SERVER[v]["SUCCESS"], {u"fields": []}
+                         if request[0] == CLIENT[v]["RUN"] else {})]
         for response in responses:
             if isinstance(response, tuple):
                 data = packed(response)
                 self.send_chunk(sock, data)
                 self.send_chunk(sock)
-                log.info("S: %s", message_repr(*response))
+                log.info("S: %s", message_repr(v, *response))
             elif isinstance(response, ExitCommand):
                 exit(0)
             else:
