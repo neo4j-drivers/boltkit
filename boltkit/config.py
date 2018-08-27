@@ -49,18 +49,25 @@ DEFAULT_BOOKMARK_READY_TIMEOUT = "5s"
 
 def update(path, properties):
     config_file_path = _config_file_path(path)
+    properties = properties.copy()
 
     with open(config_file_path, "r") as f_in:
         lines = f_in.readlines()
     with open(config_file_path, "w") as f_out:
         for line in lines:
-            for key, value in properties.items():
+            for key in properties.keys():
+                value = properties[key]
                 if line.startswith(key + "=") or \
                         (line.startswith("#") and line[1:].lstrip().startswith(key + "=")):
                     f_out.write("%s=%s\n" % (key, value))
+
+                    del properties[key]
                     break
             else:
                 f_out.write(line)
+
+        for key, value in properties.items():
+            f_out.write("%s=%s\n" % (key, value))
 
 
 def extract_http_and_bolt_uris(path):
