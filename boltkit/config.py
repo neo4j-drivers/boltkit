@@ -44,7 +44,6 @@ WINDOWS_SERVICE_NAME_SETTING = "dbms.windows_service_name"
 DEFAULT_PAGE_CACHE_MEMORY = "50m"
 DEFAULT_XMS_MEMORY = "300m"
 DEFAULT_XMX_MEMORY = "500m"
-DEFAULT_BOOKMARK_READY_TIMEOUT = "5s"
 
 
 def update(path, properties):
@@ -169,7 +168,6 @@ def _common_config():
         "dbms.memory.pagecache.size": DEFAULT_PAGE_CACHE_MEMORY,
         "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
         "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY,
-        "dbms.transaction.bookmark_ready_timeout": DEFAULT_BOOKMARK_READY_TIMEOUT,
         "dbms.connectors.default_advertised_address": "127.0.0.1",
         "dbms.backup.enabled": "false"
     }
