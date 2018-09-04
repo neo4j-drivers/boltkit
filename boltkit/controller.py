@@ -198,11 +198,11 @@ class Downloader(object):
         return package
 
 
-def wait_for_server(host, port, timeout=90):
+def wait_for_server(host, port, timeout=0):
     port = port or 7474
     running = False
     t = 0
-    while not running and t < timeout:
+    while not running and timeout and t < timeout:
         try:
             s = create_connection((host, port))
         except IOError:
@@ -262,7 +262,7 @@ class Controller(object):
         self.home = home
         self.verbosity = verbosity
 
-    def start(self, wait=True):
+    def start(self, timeout=0):
         raise NotImplementedError("Not yet supported for this platform")
 
     def stop(self, kill=False):
@@ -360,11 +360,11 @@ class UnixController(Controller):
     def os_dependent_config(cls, instance_id):
         return {}
 
-    def start(self, wait=True):
+    def start(self, timeout=0):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
         _invoke([path_join(self.home, "bin", "neo4j"), "start"])
-        if wait:
-            wait_for_server(http_uri.hostname, http_uri.port)
+        if timeout:
+            wait_for_server(http_uri.hostname, http_uri.port, timeout=timeout)
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self, kill=False):
@@ -402,12 +402,12 @@ class WindowsController(Controller):
     def os_dependent_config(cls, instance_id):
         return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
 
-    def start(self, wait=True):
+    def start(self, timeout=0):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
         _invoke([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
         _invoke([path_join(self.home, "bin", "neo4j.bat"), "start"])
-        if wait:
-            wait_for_server(http_uri.hostname, http_uri.port)
+        if timeout:
+            wait_for_server(http_uri.hostname, http_uri.port, timeout=timeout)
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self, kill=False):
@@ -549,7 +549,7 @@ def start():
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    instance_info = controller.start()
+    instance_info = controller.start(timeout=300)
 
     print(instance_info.http_uri_str())
     print(instance_info.bolt_uri_str())
@@ -663,7 +663,7 @@ def test():
         controller.create_user("neotest", "neotest")
         controller.set_user_role("neotest", "admin")
         try:
-            controller.start()
+            controller.start(timeout=300)
             exit_status = call([parsed.command] + parsed.args)
         except OSError:
             raise RuntimeError("Unable to run command %r with "

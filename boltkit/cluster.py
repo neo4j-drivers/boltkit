@@ -144,7 +144,7 @@ class Cluster:
     @classmethod
     def _cluster_member_start(cls, path):
         controller = create_controller(path)
-        return controller.start(False)
+        return controller.start()
 
     @classmethod
     def _cluster_member_stop(cls, path):
