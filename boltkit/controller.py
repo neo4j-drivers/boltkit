@@ -213,7 +213,7 @@ def wait_for_server(host, port, timeout=0):
             running = True
 
     if not running:
-        raise RuntimeError("Server %s:%d did not become available in %d seconds" % (host, port, timeout))
+        raise RuntimeError("Server %s:%d did not become available in %r seconds" % (host, port, timeout))
 
 
 def hex_bytes_str(data):
@@ -226,6 +226,7 @@ def user_record(user, password):
     m.update(salt)
     m.update(bstr(password))
     return b"".join([bstr(user), b":SHA-256,", bstr(hex_bytes_str(m.digest())), b",", bstr(hex_bytes_str(salt)), b":"])
+
 
 def get_env_variable_or_raise_error(name):
     value = getenv(name)
@@ -364,7 +365,12 @@ class UnixController(Controller):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
         _invoke([path_join(self.home, "bin", "neo4j"), "start"])
         if timeout:
-            wait_for_server(http_uri.hostname, http_uri.port, timeout=timeout)
+            try:
+                wait_for_server(http_uri.hostname, http_uri.port, timeout=timeout)
+            except RuntimeError:
+                with open(path_join(self.home, "logs", "neo4j.log"), "r") as log_file:
+                    print(log_file.read())
+                raise
         return InstanceInfo(http_uri, bolt_uri, self.home)
 
     def stop(self, kill=False):
@@ -543,13 +549,15 @@ def start():
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
+    parser.add_argument("-t", "--timeout", type=float,
+                        help="number of seconds to wait for server to start")
     parser.add_argument("home", nargs="?", default=".",help="Neo4j server directory (default: .)")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
-    instance_info = controller.start(timeout=300)
+    instance_info = controller.start(timeout=parsed.timeout)
 
     print(instance_info.http_uri_str())
     print(instance_info.bolt_uri_str())
