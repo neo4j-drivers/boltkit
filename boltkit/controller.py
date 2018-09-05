@@ -236,7 +236,6 @@ def get_env_variable_or_raise_error(name):
 
 
 class Controller(object):
-
     package_format = None
 
     @classmethod
@@ -347,7 +346,6 @@ class Controller(object):
 
 
 class UnixController(Controller):
-
     package_format = "unix.tar.gz"
 
     @classmethod
@@ -390,7 +388,6 @@ class UnixController(Controller):
 
 
 class WindowsController(Controller):
-
     package_format = "windows.zip"
 
     @classmethod
@@ -401,7 +398,7 @@ class WindowsController(Controller):
             # take first entry form zip file, it should be something like `neo4j-enterprise-3.0.0/plugins`
             firstName = files.namelist()[0]
             # strip off everything except the root path, it should become something like `neo4j-enterprise-3.0.0`
-            rootPath = firstName[0:firstName.find("/")] # ZIP file system always has "/" as separator
+            rootPath = firstName[0:firstName.find("/")]  # ZIP file system always has "/" as separator
             return path_join(path, rootPath)
 
     @classmethod
@@ -549,9 +546,9 @@ def start():
         formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show more detailed output")
-    parser.add_argument("-t", "--timeout", type=float,
+    parser.add_argument("-t", "--timeout", type=float, default=90,
                         help="number of seconds to wait for server to start")
-    parser.add_argument("home", nargs="?", default=".",help="Neo4j server directory (default: .)")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
     parsed = parser.parse_args()
     if platform.system() == "Windows":
         controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
