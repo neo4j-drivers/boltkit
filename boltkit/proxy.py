@@ -30,8 +30,8 @@ Simple proxy server for the Bolt protocol.
 
 Example:
 
-  $ bin/neo4j start     # listening on default port 7687
-  $ python -m boltkit.proxy --bind-address 0.0.0.0:7777 --server-address localhost:7687
+  $ bin/neo4j start     # Neo4j listening on default port 7687
+  $ boltproxy --bind-address 0.0.0.0:7777 --server-address localhost:7687
   $ python
   >>> from neo4j import Driver
   >>> dx = Driver("bolt://:7777", auth=("neo4j", "password"), encrypted=False)
@@ -242,7 +242,7 @@ class ProxyServer(Thread):
         self.running = False
 
 
-def main():
+def run():
     parser = ArgumentParser(description=HELP, formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument("-b", "--bind-address", help="bind address for the proxy server", default="0.0.0.0:7777")
     parser.add_argument("-s", "--server-address", help="Neo4j server address", default="localhost:7687")
@@ -255,4 +255,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run()

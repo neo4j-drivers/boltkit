@@ -27,12 +27,13 @@ except ImportError:
 packages = find_packages(exclude=("test", "test.*"))
 package_metadata = {
     "name": "boltkit",
-    "version": "1.0.39",
+    "version": "1.1.0",
     "description": "Toolkit for Neo4j 3.0+ driver authors",
     "author": "Neo Technology",
     "author_email": "drivers@neo4j.com",
     "entry_points": {
         "console_scripts": [
+            "boltproxy = boltkit.proxy:run",
             "boltrun = boltkit.runner:run",
             "boltstub = boltkit.server:stub",
             "neoctrl-download = boltkit.controller:download",
