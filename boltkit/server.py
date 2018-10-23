@@ -318,16 +318,16 @@ class StubServer(Thread):
 
         responses = self.script.match_responses()
         if not responses and self.script.match_auto_request(request):
-            try:
-                # This is hard-coded for GOODBYE. Maybe
-                # not very future proof.
-                if request[0] == CLIENT[v]["GOODBYE"]:
-                    log.info("S: <EXIT>")
-                    exit(0)
-            except KeyError:
-                pass
-            responses = [(SERVER[v]["SUCCESS"], {u"fields": []}
-                         if request[0] == CLIENT[v]["RUN"] else {})]
+            # These are hard-coded and therefore not very future-proof.
+            if request[0] in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
+                responses = [(SERVER[v]["SUCCESS"], {u"server": u"Neo4j/9.99.999"})]
+            elif request[0] == CLIENT[v].get("GOODBYE"):
+                log.info("S: <EXIT>")
+                exit(0)
+            elif request[0] == CLIENT[v]["RUN"]:
+                responses = [(SERVER[v]["SUCCESS"], {u"fields": []})]
+            else:
+                responses = [(SERVER[v]["SUCCESS"], {})]
         for response in responses:
             if isinstance(response, tuple):
                 data = packed(response)
