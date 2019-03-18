@@ -638,7 +638,7 @@ BOLT = b"\x60\x60\xB0\x17"
 # And that's it. If the server responds with anything else, hang up and get in touch. We may have a
 # problem.
 #
-BOLT_VERSIONS = [3, 2, 1, 0]
+BOLT_VERSIONS = [4, 3, 2, 1]
 RAW_BOLT_VERSIONS = b"".join(raw_pack(UINT_32, version) for version in BOLT_VERSIONS)
 
 # Messaging
