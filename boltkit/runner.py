@@ -18,6 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from os import getenv
 from sys import argv
 
 from .connector import connect
@@ -26,7 +27,14 @@ from .watcher import watch
 
 def run():
     watch("boltkit.connector")
-    with connect(("localhost", 7687), user="neo4j", password="password") as cx:
+    host = getenv("NEO4J_HOST", "localhost")
+    port = getenv("NEO4J_PORT", "7687")
+    try:
+        port_no = int(port)
+    except (ValueError, TypeError):
+        raise ValueError("Invalid port number %r" % port)
+    address = (host, port_no)
+    with connect(address, user=getenv("NEO4J_USER", "neo4j"), password=getenv("NEO4J_PASSWORD")) as cx:
         records = []
         cx.run(argv[1], {})
         cx.pull(-1, records)

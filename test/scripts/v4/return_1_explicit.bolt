@@ -5,10 +5,10 @@
 
 C: BEGIN {}
    RUN "RETURN $x" {"x": 1} {}
-   PULL -1
+   PULL {"n": -1, "qid": -1}
    COMMIT
 S: SUCCESS {}
-   SUCCESS {"fields": ["x"]}
+   SUCCESS {"fields": ["x"], "qid": 789}
    RECORD [1]
    SUCCESS {}
    SUCCESS {}
