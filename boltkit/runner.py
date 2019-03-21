@@ -20,19 +20,20 @@
 
 from sys import argv
 
-from .driver import Driver, string
+from .connector import connect
 from .watcher import watch
 
 
 def run():
-    watch("boltkit.connection")
-    driver = Driver("bolt://localhost:7687", user="neo4j", password="password")
-    session = driver.session()
-    result = session.run(argv[1])
-    while result.forward():
-        print("\t".join(map(string, result.current())))
-    session.close()
-    driver.close()
+    watch("boltkit.connector")
+    with connect(("localhost", 7687), user="neo4j", password="password") as cx:
+        records = []
+        cx.run(argv[1], {})
+        cx.pull(-1, records)
+        cx.send_all()
+        cx.fetch_all()
+        for record in records:
+            print("\t".join(map(str, record)))
 
 
 if __name__ == "__main__":

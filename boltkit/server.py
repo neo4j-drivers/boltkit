@@ -37,7 +37,8 @@ from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
 
-from .driver import h, UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSIONS as server_known_versions
+from .bytetools import h
+from .connector import UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, MAX_BOLT_VERSION, Structure
 from .watcher import watch
 
 TIMEOUT = 30
@@ -45,10 +46,17 @@ TIMEOUT = 30
 
 log = getLogger("boltkit.server")
 
+server_agents = {
+    1: "Neo4j/3.0.0",
+    2: "Neo4j/3.4.0",
+    3: "Neo4j/3.5.0",
+    4: "Neo4j/4.0.0",
+}
 
-def message_repr(v, tag, *data):
-    name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == tag)
-    return "%s %s" % (name, " ".join(map(json_dumps, data)))
+
+def message_repr(v, message):
+    name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == message.tag)
+    return "%s %s" % (name, " ".join(map(json_dumps, message.fields)))
 
 
 class Peer(object):
@@ -71,7 +79,7 @@ class Line(Item):
         self.message = message
 
     def __repr__(self):
-        return "%s: %s" % (self.peer, message_repr(self.protocol_version, *self.message))
+        return "%s: %s" % (self.peer, message_repr(self.protocol_version, self.message))
 
 
 class ExitCommand(Item):
@@ -82,7 +90,7 @@ class ExitCommand(Item):
 class Script(object):
 
     def __init__(self, file_name=None):
-        self.protocol_version = 1
+        self.bolt_version = 1
         self.auto = []
         self.lines = deque()
         if file_name:
@@ -99,14 +107,15 @@ class Script(object):
 
     def parse_message(self, message):
         tag, _, data = message.partition(" ")
-        v = self.protocol_version
+        v = self.bolt_version
         if tag in CLIENT[v]:
-            parsed = (CLIENT[v][tag],)
+            parsed_tag = CLIENT[v][tag]
         elif tag in SERVER[v]:
-            parsed = (SERVER[v][tag],)
+            parsed_tag = SERVER[v][tag]
         else:
             raise ValueError("Unknown message type %s" % tag)
         decoder = JSONDecoder()
+        parsed = []
         while data:
             data = data.lstrip()
             try:
@@ -114,9 +123,9 @@ class Script(object):
             except JSONDecodeError:
                 break
             else:
-                parsed += (decoded,)
+                parsed.append(decoded)
                 data = data[end:]
-        return parsed
+        return Structure(parsed_tag, *parsed)
 
     def parse_command(self, message):
         tag, _, data = message.partition(" ")
@@ -146,19 +155,19 @@ class Script(object):
                     if command == "AUTO":
                         self.auto.append(self.parse_message(rest))
                     if command == "BOLT":
-                        self.protocol_version = int(rest)
-                        if self.protocol_version not in server_known_versions:
+                        self.bolt_version = int(rest)
+                        if self.bolt_version < 0 or self.bolt_version > MAX_BOLT_VERSION or CLIENT[self.bolt_version] is None:
                             raise RuntimeError("Protocol version %r in script %r is not available "
-                                               "in this version of BoltKit" % (self.protocol_version, file_name))
+                                               "in this version of BoltKit" % (self.bolt_version, file_name))
                 elif mode in "CS":
                     if line.startswith("<"):
-                        lines.append(Line(self.protocol_version, line_no, mode, self.parse_command(line)))
+                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_command(line)))
                     else:
-                        lines.append(Line(self.protocol_version, line_no, mode, self.parse_message(line)))
+                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_message(line)))
 
     def match_auto_request(self, request):
         for message in self.auto:
-            if len(message) == 1 and request[0] == message[0]:
+            if request.tag == message.tag:
                 return True
             elif request == message:
                 return True
@@ -198,9 +207,13 @@ class StubServer(Thread):
     peers = None
     script = Script()
 
-    def __init__(self, address, script_name=None, timeout=None):
+    def __init__(self, address, script_name=None, timeout=None, user=None, password=None):
         super(StubServer, self).__init__()
         self.address = address
+        self.settings = {
+            "user": user,
+            "password": password,
+        }
         self.server = socket()
         self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.server.bind(self.address)
@@ -273,7 +286,7 @@ class StubServer(Thread):
         client_requested_versions = [suggested_version_1, suggested_version_2, suggested_version_3, suggested_version_4]
         log.info("C: <VERSION> [0x%08x, 0x%08x, 0x%08x, 0x%08x]" % tuple(client_requested_versions))
 
-        v = self.script.protocol_version
+        v = self.script.bolt_version
         if v not in client_requested_versions:
             raise RuntimeError("Script protocol version %r not offered by client" % v)
 
@@ -308,36 +321,36 @@ class StubServer(Thread):
 
         if self.script.match_request(request):
             # explicitly matched
-            log.info("C: %s", message_repr(v, *request))
+            log.info("C: %s", message_repr(v, request))
         elif self.script.match_auto_request(request):
             # auto matched
-            log.info("C! %s", message_repr(v, *request))
+            log.info("C! %s", message_repr(v, request))
         else:
             # not matched
-            log.error("C: %s", message_repr(v, *request))
+            log.error("C: %s", message_repr(v, request))
 
         responses = self.script.match_responses()
         if not responses and self.script.match_auto_request(request):
             # These are hard-coded and therefore not very future-proof.
-            if request[0] in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
-                responses = [(SERVER[v]["SUCCESS"], {u"server": u"Neo4j/9.99.999"})]
-            elif request[0] == CLIENT[v].get("GOODBYE"):
+            if request.tag in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
+                responses = [Structure(SERVER[v]["SUCCESS"], {"server": server_agents.get(v, "Neo4j/9.99.999")})]
+            elif request.tag == CLIENT[v].get("GOODBYE"):
                 log.info("S: <EXIT>")
                 exit(0)
-            elif request[0] == CLIENT[v]["RUN"]:
-                responses = [(SERVER[v]["SUCCESS"], {u"fields": []})]
+            elif request.tag == CLIENT[v]["RUN"]:
+                responses = [Structure(SERVER[v]["SUCCESS"], {"fields": []})]
             else:
-                responses = [(SERVER[v]["SUCCESS"], {})]
+                responses = [Structure(SERVER[v]["SUCCESS"], {})]
         for response in responses:
-            if isinstance(response, tuple):
+            if isinstance(response, Structure):
                 data = packed(response)
                 self.send_chunk(sock, data)
                 self.send_chunk(sock)
-                log.info("S: %s", message_repr(v, *response))
+                log.info("S: %s", message_repr(v, Structure(response.tag, *response.fields)))
             elif isinstance(response, ExitCommand):
                 exit(0)
             else:
-                raise RuntimeError("Unknown response type %r" % response)
+                raise RuntimeError("Unknown response type %r" % (response,))
 
     def send_chunk(self, sock, data=b""):
         header = raw_pack(UINT_16, len(data))
@@ -353,6 +366,23 @@ class StubServer(Thread):
             exit(1)
         else:
             return h(data)
+
+
+def stub_test(script, port=17687):
+    """ Decorator for stub tests.
+    """
+    def f__(f):
+        def f_(*args, **kwargs):
+            server = StubServer(("127.0.0.1", port), script, timeout=5)
+            server.start()
+            kwargs["server"] = server
+            yield f(*args, **kwargs)
+            server.stop()
+        f_.__name__ = f.__name__
+        f_.__doc__ = f.__doc__
+        f_.__dict__.update(f.__dict__)
+        return f_
+    return f__
 
 
 def stub():
