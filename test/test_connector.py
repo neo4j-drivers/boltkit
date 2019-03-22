@@ -21,7 +21,7 @@
 
 from unittest import TestCase
 
-from boltkit.connector import connect, packed
+from boltkit.client import connect, packed
 from boltkit.bytetools import h
 
 

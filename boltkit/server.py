@@ -19,17 +19,12 @@
 # limitations under the License.
 
 """
-Stub server
+Server components, including stub server and proxy server.
 """
 
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
-from collections import deque
 from itertools import chain
-from json import dumps as json_dumps, JSONDecoder
-try:
-    from json import JSONDecodeError
-except ImportError:
-    JSONDecodeError = ValueError
+from json import dumps as json_dumps
+
 from logging import getLogger
 from select import select
 from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error, SHUT_RDWR
@@ -38,13 +33,14 @@ from sys import exit
 from threading import Thread
 
 from .bytetools import h
-from .connector import UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, MAX_BOLT_VERSION, Structure
-from .watcher import watch
+from .client import UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, Structure, Packed, UINT_32
+from .scripting import Script, ExitCommand
+
 
 TIMEOUT = 30
 
 
-log = getLogger("boltkit.server")
+log = getLogger("bolt.server")
 
 server_agents = {
     1: "Neo4j/3.0.0",
@@ -61,145 +57,104 @@ def message_repr(v, message):
 
 class Peer(object):
 
-    def __init__(self, address):
+    def __init__(self, socket, address):
+        self.socket = socket
         self.address = address
-        self.version = 0
+        self.bolt_version = 0
 
 
-class Item(object):
-    pass
+class ProxyPair(Thread):
 
+    def __init__(self, client, server):
+        super(ProxyPair, self).__init__()
+        self.client = client
+        self.server = server
+        print("C: <CONNECT> {} -> {}".format(self.client.address, self.server.address))
+        print("C: <BOLT> {}".format(h(self.forward_bytes(client, server, 4))))
+        print("C: <VERSION> {}".format(h(self.forward_bytes(client, server, 16))))
+        raw_bolt_version = self.forward_bytes(server, client, 4)
+        bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
+        self.client.bolt_version = self.server.bolt_version = bolt_version
+        print("S: <VERSION> {}".format(h(raw_bolt_version)))
+        self.client_messages = {v: k for k, v in CLIENT[self.client.bolt_version].items()}
+        self.server_messages = {v: k for k, v in SERVER[self.server.bolt_version].items()}
 
-class Line(Item):
-
-    def __init__(self, protocol_version, line_no, peer, message):
-        self.protocol_version = protocol_version
-        self.line_no = line_no
-        self.peer = peer
-        self.message = message
-
-    def __repr__(self):
-        return "%s: %s" % (self.peer, message_repr(self.protocol_version, self.message))
-
-
-class ExitCommand(Item):
-
-    pass
-
-
-class Script(object):
-
-    def __init__(self, file_name=None):
-        self.bolt_version = 1
-        self.auto = []
-        self.lines = deque()
-        if file_name:
-            self.append(file_name)
-
-    def __nonzero__(self):
-        return bool(self.lines)
-
-    def __bool__(self):
-        return bool(self.lines)
-
-    def __len__(self):
-        return len(self.lines)
-
-    def parse_message(self, message):
-        tag, _, data = message.partition(" ")
-        v = self.bolt_version
-        if tag in CLIENT[v]:
-            parsed_tag = CLIENT[v][tag]
-        elif tag in SERVER[v]:
-            parsed_tag = SERVER[v][tag]
-        else:
-            raise ValueError("Unknown message type %s" % tag)
-        decoder = JSONDecoder()
-        parsed = []
-        while data:
-            data = data.lstrip()
+    def run(self):
+        client = self.client
+        server = self.server
+        more = True
+        while more:
             try:
-                decoded, end = decoder.raw_decode(data)
-            except JSONDecodeError:
-                break
-            else:
-                parsed.append(decoded)
-                data = data[end:]
-        return Structure(parsed_tag, *parsed)
+                self.forward_exchange(client, server)
+            except RuntimeError:
+                more = False
+        print("C: <CLOSE>")
 
-    def parse_command(self, message):
-        tag, _, data = message.partition(" ")
-        if tag == "<EXIT>":
-            return ExitCommand()
-        else:
-            raise ValueError("Unknown command %s" % tag)
+    def forward_bytes(self, source, target, size):
+        data = source.socket.recv(size)
+        target.socket.sendall(data)
+        return data
 
-    def parse_lines(self, lines):
-        mode = "C"
-        for line_no, line in enumerate(lines, start=1):
-            line = line.rstrip()
-            if line == "" or line.startswith("//"):
-                pass
-            elif len(line) >= 2 and line[1] == ":":
-                mode = line[0].upper()
-                yield line_no, mode, line[2:].lstrip()
-            elif mode is not None:
-                yield line_no, mode, line.lstrip()
+    def forward_chunk(self, source, target):
+        chunk_header = self.forward_bytes(source, target, 2)
+        if not chunk_header:
+            raise RuntimeError()
+        chunk_size = chunk_header[0] * 0x100 + chunk_header[1]
+        return self.forward_bytes(source, target, chunk_size)
 
-    def append(self, file_name):
-        lines = self.lines
-        with open(file_name) as f:
-            for line_no, mode, line in self.parse_lines(f):
-                if mode == "!":
-                    command, _, rest = line.partition(" ")
-                    if command == "AUTO":
-                        self.auto.append(self.parse_message(rest))
-                    if command == "BOLT":
-                        self.bolt_version = int(rest)
-                        if self.bolt_version < 0 or self.bolt_version > MAX_BOLT_VERSION or CLIENT[self.bolt_version] is None:
-                            raise RuntimeError("Protocol version %r in script %r is not available "
-                                               "in this version of BoltKit" % (self.bolt_version, file_name))
-                elif mode in "CS":
-                    if line.startswith("<"):
-                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_command(line)))
-                    else:
-                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_message(line)))
+    def forward_message(self, source, target):
+        d = b""
+        size = -1
+        while size:
+            data = self.forward_chunk(source, target)
+            size = len(data)
+            d += data
+        return d
 
-    def match_auto_request(self, request):
-        for message in self.auto:
-            if request.tag == message.tag:
-                return True
-            elif request == message:
-                return True
-        return False
-
-    def match_request(self, request):
-        if not self.lines:
-            return 0
-        line = self.lines[0]
-        if line.peer != "C":
-            return 0
-        if match(line.message, request):
-            self.lines.popleft()
-            return 1
-        else:
-            return 0
-
-    def match_responses(self):
-        responses = []
-        while self.lines and self.lines[0].peer == "S":
-            line = self.lines.popleft()
-            if isinstance(line, Line):
-                responses.append(line.message)
-            elif isinstance(line, ExitCommand):
-                pass
-            else:
-                raise RuntimeError("Unexpected response %r" % line)
-        return responses
+    def forward_exchange(self, client, server):
+        rq_message = self.forward_message(client, server)
+        rq_signature = rq_message[1]
+        rq_data = Packed(rq_message[2:]).unpack_all()
+        print("C: {} {}".format(self.client_messages[rq_signature], " ".join(map(repr, rq_data))))
+        more = True
+        while more:
+            rs_message = self.forward_message(server, client)
+            rs_signature = rs_message[1]
+            rs_data = Packed(rs_message[2:]).unpack_all()
+            print("S: {} {}".format(self.server_messages[rs_signature], " ".join(map(repr, rs_data))))
+            more = rs_signature == 0x71
 
 
-def match(expected, actual):
-    return expected == actual
+class ProxyServer(Thread):
+
+    running = False
+
+    def __init__(self, bind_address, server_address):
+        super(ProxyServer, self).__init__()
+        self.socket = socket()
+        self.socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        self.socket.bind(bind_address)
+        self.socket.listen(0)
+        self.server_address = server_address
+        self.pairs = []
+
+    def __del__(self):
+        self.stop()
+
+    def run(self):
+        self.running = True
+        while self.running:
+            client_socket, client_address = self.socket.accept()
+            server_socket = socket()
+            server_socket.connect(self.server_address)
+            client = Peer(client_socket, client_address)
+            server = Peer(server_socket, self.server_address)
+            pair = ProxyPair(client, server)
+            pair.start()
+            self.pairs.append(pair)
+
+    def stop(self):
+        self.running = False
 
 
 class StubServer(Thread):
@@ -228,7 +183,7 @@ class StubServer(Thread):
         self.stop()
 
     def run(self):
-        self.peers[self.server] = Peer(self.address)
+        self.peers[self.server] = Peer(self.server, self.address)
         while self.running:
             read_list, _, _ = select(list(self.peers), [], [], self.timeout)
             if read_list:
@@ -254,7 +209,7 @@ class StubServer(Thread):
         try:
             if sock == self.server:
                 self.accept(sock)
-            elif self.peers[sock].version:
+            elif self.peers[sock].bolt_version:
                 self.handle_request(sock)
             else:
                 self.handshake(sock)
@@ -264,7 +219,7 @@ class StubServer(Thread):
 
     def accept(self, sock):
         new_sock, address = sock.accept()
-        self.peers[new_sock] = Peer(address)
+        self.peers[new_sock] = Peer(new_sock, address)
         listen_address = self.peers[sock].address
         serve_address = self.peers[new_sock].address
         log.info("~~ <ACCEPT> \"%s\" %d -> %d", listen_address[0], listen_address[1], serve_address[1])
@@ -293,11 +248,11 @@ class StubServer(Thread):
         # only single protocol version is currently supported
         response = raw_pack(INT_32, v)
         log.info("S: <VERSION> 0x%08x" % v)
-        self.peers[sock].version = v
+        self.peers[sock].bolt_version = v
         sock.send(response)
 
     def handle_request(self, sock):
-        v = self.peers[sock].version
+        v = self.peers[sock].bolt_version
 
         chunked_data = b""
         message_data = b""
@@ -383,33 +338,3 @@ def stub_test(script, port=17687):
         f_.__dict__.update(f.__dict__)
         return f_
     return f__
-
-
-def stub():
-    parser = ArgumentParser(
-        description="Run a stub Bolt server.\r\n"
-                    "\r\n"
-                    "example:\r\n"
-                    "  boltstub 9001 example.bolt",
-        epilog="Report bugs to drivers@neo4j.com",
-        formatter_class=RawDescriptionHelpFormatter)
-    parser.add_argument("-e", "--enterprise", action="store_true",
-                        help="select Neo4j Enterprise Edition (default: Community)")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="show more detailed output")
-    parser.add_argument("port", type=int, help="port number to listen for connection on")
-    parser.add_argument("script", help="Bolt script file")
-    parsed = parser.parse_args()
-    watch("boltkit.server")
-    server = StubServer(("127.0.0.1", parsed.port), parsed.script)
-    server.start()
-    try:
-        while server.is_alive():
-            pass
-    except KeyboardInterrupt:
-        pass
-    exit(0 if not server.script else 1)
-
-
-if __name__ == "__main__":
-    stub()

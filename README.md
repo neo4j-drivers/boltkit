@@ -41,7 +41,7 @@ pip install --upgrade boltkit
 
 ## <a name="demo-driver"></a>Demo Driver 
 
-- Source: [`boltkit/driver.py`](boltkit/connector.py)
+- Source: [`boltkit/driver.py`](boltkit/client.py)
 
 This file contains both a fully-working Neo4j driver as well as a step-by-step tutorial for how to implement a driver in any language.
 To view the code and tutorial in a terminal, use:

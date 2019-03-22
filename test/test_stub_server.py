@@ -21,7 +21,7 @@
 
 from unittest import TestCase
 
-from boltkit.connector import connect
+from boltkit.client import connect
 from boltkit.server import stub_test
 
 

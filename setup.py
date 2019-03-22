@@ -33,9 +33,6 @@ package_metadata = {
     "author_email": "drivers@neo4j.com",
     "entry_points": {
         "console_scripts": [
-            "boltproxy = boltkit.proxy:run",
-            "boltrun = boltkit.runner:run",
-            "boltstub = boltkit.server:stub",
             "neoctrl-download = boltkit.controller:download",
             "neoctrl-install = boltkit.controller:install",
             "neoctrl-cluster = boltkit.cluster:cluster",
@@ -46,11 +43,13 @@ package_metadata = {
             "neoctrl-create-user = boltkit.controller:create_user",
             "neoctrl-configure = boltkit.controller:configure",
             "neotest = boltkit.controller:test",
+            "bolt = boltkit.__main__:bolt",
         ],
     },
     "packages": packages,
     "install_requires": [
-        "boto==2.48.0"
+        "boto==2.48.0",
+        "click<8,>=7",
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [

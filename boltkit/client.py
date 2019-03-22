@@ -532,6 +532,10 @@ class Packed:
             else:
                 raise ValueError("Unknown marker byte {:02X}".format(marker_byte))
 
+    def unpack_all(self):
+        while self.offset < len(self.data):
+            yield next(self.unpack(1))
+
 
 def unpacked(data, offset=0):
     return next(Packed(data, offset).unpack())
@@ -787,7 +791,7 @@ MAX_CHUNK_SIZE = 65535
 SOCKET_TIMEOUT = 5
 
 
-log = getLogger("boltkit.connector")
+log = getLogger("bolt.client")
 
 
 def connect(address, **settings):
@@ -808,17 +812,16 @@ def connect(address, **settings):
     """
 
     # Establish a connection to the host and port specified
-    log.debug("~~ <CONNECT> \"%s\" %d", *address)
+    log.debug("~~ <CONNECT> %r", address)
     socket = create_connection(address)
     socket.settimeout(SOCKET_TIMEOUT)
 
-    log.debug("C: <BOLT>")
+    log.debug("C: <BOLT> b'\\x%02x\\x%02x\\x%02x\\x%02x'", *BOLT)
     socket.sendall(BOLT)
 
     # Establish which protocol versions we want to attempt to use
-    try:
-        bolt_versions = settings["bolt_versions"]
-    except KeyError:
+    bolt_versions = settings.get("bolt_versions")
+    if not bolt_versions:
         bolt_versions = sorted([v for v, x in enumerate(CLIENT) if x is not None], reverse=True)
     # Raise an error if we're including any non-supported versions
     if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
@@ -830,11 +833,11 @@ def connect(address, **settings):
     socket.sendall(b"".join(raw_pack(UINT_32, version) for version in bolt_versions))
 
     # Handle the handshake response
-    raw_version = socket.recv(4)
-    bolt_version, = raw_unpack(UINT_32, raw_version)
+    raw_bolt_version = socket.recv(4)
+    bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
     log.debug("S: <VERSION> %d", bolt_version)
 
-    if bolt_version in bolt_versions:
+    if bolt_version > 0 and bolt_version in bolt_versions:
         return Connection(socket, bolt_version, **settings)
     else:
         log.error("~~ <CLOSE> Could not negotiate protocol version")
@@ -856,20 +859,22 @@ class Connection:
         password = settings.get("password", "password")
         user_agent = settings.get("user_agent", DEFAULT_USER_AGENT)
         if bolt_version >= 3:
-            log.debug("C: HELLO {...}")
-            request = Structure(CLIENT[self.bolt_version]["HELLO"], {
+            args = {
                 "scheme": "basic",
                 "principal": user,
                 "credentials": password,
                 "user_agent": user_agent,
-            })
+            }
+            log.debug("C: HELLO %r" % dict(args, credentials="..."))
+            request = Structure(CLIENT[self.bolt_version]["HELLO"], args)
         else:
-            log.debug("C: INIT %r {...}", user_agent)
-            request = Structure(CLIENT[self.bolt_version]["INIT"], user_agent, {
+            auth_token = {
                 "scheme": "basic",
                 "principal": settings.get("user", "neo4j"),
                 "credentials": settings.get("password", "password"),
-            })
+            }
+            log.debug("C: INIT %r %r", user_agent, dict(auth_token, credentials="..."))
+            request = Structure(CLIENT[self.bolt_version]["INIT"], user_agent, auth_token)
         self.requests.append(request)
         self.send_all()
         response = Response(self.bolt_version)
@@ -939,6 +944,7 @@ class Connection:
         return response
 
     def begin(self, metadata=None):
+        metadata = metadata or {}
         if self.bolt_version >= 3:
             log.debug("C: BEGIN %r", metadata)
             self.requests.append(Structure(CLIENT[self.bolt_version]["BEGIN"], metadata))
