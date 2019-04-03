@@ -18,18 +18,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-try:
-    from setuptools import setup, find_packages
-except ImportError:
-    from distutils.core import setup, find_packages
+
+from setuptools import setup, find_packages
 
 
 packages = find_packages(exclude=("test", "test.*"))
 package_metadata = {
     "name": "boltkit",
-    "version": "1.2.0",
+    "version": "2.0.0",
     "description": "Toolkit for Neo4j 3.0+ driver authors",
-    "author": "Neo Technology",
+    "author": "Neo4j",
     "author_email": "drivers@neo4j.com",
     "entry_points": {
         "console_scripts": [
@@ -49,19 +47,21 @@ package_metadata = {
     "packages": packages,
     "install_requires": [
         "boto==2.48.0",
+        "certifi",
         "click<8,>=7",
+        "docker",
+        "urllib3",
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [
-        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
-        "Programming Language :: Python :: 2.7",
-        "Programming Language :: Python :: 3.3",
         "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
         "Topic :: Database",
         "Topic :: Software Development",
     ],

@@ -794,6 +794,7 @@ SOCKET_TIMEOUT = 5
 log = getLogger("bolt.client")
 
 
+# TODO: replace with Connection.open
 def connect(address, **settings):
     """ Establish a connection to a Bolt server. It is here that we create a low-level socket
     connection and carry out version negotiation. Following this (and assuming success) a
@@ -811,44 +812,64 @@ def connect(address, **settings):
         ProtocolError: if the protocol version could not be negotiated.
     """
 
-    # Establish a connection to the host and port specified
-    log.debug("~~ <CONNECT> %r", address)
-    socket = create_connection(address)
-    socket.settimeout(SOCKET_TIMEOUT)
-
-    log.debug("C: <BOLT> b'\\x%02x\\x%02x\\x%02x\\x%02x'", *BOLT)
-    socket.sendall(BOLT)
-
-    # Establish which protocol versions we want to attempt to use
-    bolt_versions = settings.get("bolt_versions")
-    if not bolt_versions:
-        bolt_versions = sorted([v for v, x in enumerate(CLIENT) if x is not None], reverse=True)
-    # Raise an error if we're including any non-supported versions
-    if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
-        raise ProtocolError("Unknown Bolt versions in %r" % bolt_versions)
-    # Ensure we send exactly 4 versions, padding with zeroes if necessary
-    bolt_versions = (list(bolt_versions) + [0, 0, 0, 0])[:4]
-    # Send the protocol versions to the server
-    log.debug("C: <VERSION> %r", bolt_versions)
-    socket.sendall(b"".join(raw_pack(UINT_32, version) for version in bolt_versions))
-
-    # Handle the handshake response
-    raw_bolt_version = socket.recv(4)
-    bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
-    log.debug("S: <VERSION> %d", bolt_version)
-
-    if bolt_version > 0 and bolt_version in bolt_versions:
-        return Connection(socket, bolt_version, **settings)
-    else:
-        log.error("~~ <CLOSE> Could not negotiate protocol version")
-        socket.close()
-        raise ProtocolError("Could not negotiate protocol version")
+    return Connection.open(address, **settings)
 
 
 class Connection:
     """ The Connection wraps a socket through which protocol messages are sent and received. The
     socket is owned by this Connection instance...
     """
+
+    @classmethod
+    def open(cls, address, **settings):
+        """ Establish a connection to a Bolt server. It is here that we create a low-level socket
+        connection and carry out version negotiation. Following this (and assuming success) a
+        Connection instance will be returned.  This Connection takes ownership of the underlying
+        socket and is subsequently responsible for managing its lifecycle.
+
+        Args:
+            address: A tuple of host and port, such as ("127.0.0.1", 7687).
+            settings: Settings for initialising the connection once established.
+
+        Returns:
+            A connection to the Bolt server.
+
+        Raises:
+            ProtocolError: if the protocol version could not be negotiated.
+        """
+
+        # Establish a connection to the host and port specified
+        log.debug("~~ <CONNECT> %r", address)
+        socket = create_connection(address)
+        socket.settimeout(SOCKET_TIMEOUT)
+
+        log.debug("C: <BOLT> b'\\x%02x\\x%02x\\x%02x\\x%02x'", *BOLT)
+        socket.sendall(BOLT)
+
+        # Establish which protocol versions we want to attempt to use
+        bolt_versions = settings.get("bolt_versions")
+        if not bolt_versions:
+            bolt_versions = sorted([v for v, x in enumerate(CLIENT) if x is not None], reverse=True)
+        # Raise an error if we're including any non-supported versions
+        if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
+            raise ProtocolError("Unknown Bolt versions in %r" % bolt_versions)
+        # Ensure we send exactly 4 versions, padding with zeroes if necessary
+        bolt_versions = (list(bolt_versions) + [0, 0, 0, 0])[:4]
+        # Send the protocol versions to the server
+        log.debug("C: <VERSION> %r", bolt_versions)
+        socket.sendall(b"".join(raw_pack(UINT_32, version) for version in bolt_versions))
+
+        # Handle the handshake response
+        raw_bolt_version = socket.recv(4)
+        bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
+        log.debug("S: <VERSION> %d", bolt_version)
+
+        if bolt_version > 0 and bolt_version in bolt_versions:
+            return cls(socket, bolt_version, **settings)
+        else:
+            log.error("~~ <CLOSE> Could not negotiate protocol version")
+            socket.close()
+            raise ProtocolError("Could not negotiate protocol version")
 
     def __init__(self, socket, bolt_version, **settings):
         self.socket = socket
@@ -876,11 +897,11 @@ class Connection:
             log.debug("C: INIT %r %r", user_agent, dict(auth_token, credentials="..."))
             request = Structure(CLIENT[self.bolt_version]["INIT"], user_agent, auth_token)
         self.requests.append(request)
-        self.send_all()
         response = Response(self.bolt_version)
         self.responses.append(response)
-        while not response.complete():
-            self.fetch_one()
+        self.send_all()
+        self.fetch_all()
+        self.server_agent = response.metadata["server"]
 
     def __enter__(self):
         return self

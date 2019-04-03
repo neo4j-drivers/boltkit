@@ -19,9 +19,15 @@
 # limitations under the License.
 
 
+from shlex import quote as shlex_quote
+from subprocess import run
+from time import sleep
+
 import click
 
-from .client import connect, ProtocolError
+from .client import Connection
+from .containers import Neo4jContainer
+from .dist import Distributor
 from .server import ProxyServer, StubServer
 from .watcher import watch
 
@@ -31,7 +37,7 @@ def bolt():
     pass
 
 
-@bolt.command()
+@bolt.command(help="Run a Bolt client")
 @click.option("-b", "--bolt-version", default=0, type=int)
 @click.option("-h", "--host", default="localhost", show_default=True)
 @click.option("-p", "--port", default="7687", show_default=True, type=int)
@@ -49,7 +55,7 @@ def client(cypher, host, port, user, password, transaction, verbose, bolt_versio
     else:
         bolt_versions = None
     try:
-        with connect(address, user=user, password=password, bolt_versions=bolt_versions) as cx:
+        with Connection.open(address, user=user, password=password, bolt_versions=bolt_versions) as cx:
             records = []
             if transaction:
                 cx.begin()
@@ -62,17 +68,17 @@ def client(cypher, host, port, user, password, transaction, verbose, bolt_versio
             cx.fetch_all()
             for record in records:
                 print("\t".join(map(str, record)))
-    except ProtocolError as e:
-        print("Protocol Error: %s" % e.args[0])
+    except Exception as e:
+        print(*e.args)
         exit(1)
 
 
-@bolt.command()
+@bolt.command(help="Run a Bolt stub server")
 @click.option("-H", "--bind-host", default="localhost", show_default=True)
 @click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
 @click.option("-v", "--verbose", is_flag=True)
 @click.argument("script")
-def stub_server(bind_host, bind_port, script, verbose):
+def stub(bind_host, bind_port, script, verbose):
     if verbose:
         watch("bolt.server")
     server = StubServer((bind_host, bind_port), script)
@@ -85,14 +91,80 @@ def stub_server(bind_host, bind_port, script, verbose):
     exit(0 if not server.script else 1)
 
 
-@bolt.command()
+@bolt.command(help="Run a Bolt proxy server")
 @click.option("-H", "--bind-host", default="localhost", show_default=True)
 @click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
 @click.option("-h", "--server-host", default="localhost", show_default=True)
 @click.option("-p", "--server-port", default=7687, type=int, show_default=True)
-def proxy_server(bind_host, bind_port, server_host, server_port):
+def proxy(bind_host, bind_port, server_host, server_port):
     server = ProxyServer((bind_host, bind_port), (server_host, server_port))
     server.start()
+
+
+@bolt.command(help="List available Neo4j releases")
+def dist():
+    try:
+        distributor = Distributor()
+        for name, r in distributor.releases.items():
+            if name == r.name.upper():
+                print(r.name)
+    except Exception as e:
+        print(*e.args)
+        exit(1)
+
+
+@bolt.command(help="Download Neo4j")
+@click.option("-e", "--enterprise", is_flag=True)
+@click.option("-s", "--s3", is_flag=True)
+@click.option("-t", "--teamcity", is_flag=True)
+@click.option("-w", "--windows", is_flag=True)
+@click.argument("version")
+def get(version, enterprise, s3, teamcity, windows):
+    try:
+        distributor = Distributor()
+        edition = "enterprise" if enterprise else "community"
+        if windows:
+            package_format = "windows.zip"
+        else:
+            package_format = "unix.tar.gz"
+        if s3:
+            distributor.download_from_s3(edition, version, package_format)
+        elif teamcity:
+            distributor.download_from_teamcity(edition, version, package_format)
+        else:
+            distributor.download(edition, version, package_format)
+    except Exception as e:
+        print(*e.args)
+        exit(1)
+
+
+@bolt.command(context_settings=dict(
+    ignore_unknown_options=True,
+), help="Integration test a Neo4j-backed application")
+@click.option("-i", "--image", default="latest", show_default=True)
+@click.option("-v", "--verbose", is_flag=True)
+@click.argument("command", nargs=-1, type=click.UNPROCESSED)
+def server(command, image, verbose):
+    if verbose:
+        watch("boltkit.containers")
+    try:
+        with Neo4jContainer(image) as neo4j:
+            if command:
+                run(" ".join(map(shlex_quote, command)), shell=True, env={
+                    "NEO4J_HOST": neo4j.bolt_address[0],
+                    "NEO4J_PORT": str(neo4j.bolt_address[1]),
+                    "NEO4J_USER": neo4j.auth[0],
+                    "NEO4J_PASSWORD": neo4j.auth[1],
+                })
+            else:
+                try:
+                    while True:
+                        sleep(0.1)
+                except KeyboardInterrupt:
+                    pass
+    except Exception as e:
+        print(*e.args)
+        exit(1)
 
 
 if __name__ == "__main__":
