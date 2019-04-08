@@ -786,33 +786,8 @@ SERVER[1] = {
 }
 SERVER[4] = SERVER[3] = SERVER[2] = SERVER[1]
 
-DEFAULT_USER_AGENT = "boltkit/0.0"
-MAX_CHUNK_SIZE = 65535
-SOCKET_TIMEOUT = 5
-
 
 log = getLogger("bolt.client")
-
-
-# TODO: replace with Connection.open
-def connect(address, **settings):
-    """ Establish a connection to a Bolt server. It is here that we create a low-level socket
-    connection and carry out version negotiation. Following this (and assuming success) a
-    Connection instance will be returned.  This Connection takes ownership of the underlying
-    socket and is subsequently responsible for managing its lifecycle.
-
-    Args:
-        address: A tuple of host and port, such as ("127.0.0.1", 7687).
-        settings: Settings for initialising the connection once established.
-
-    Returns:
-        A connection to the Bolt server.
-
-    Raises:
-        ProtocolError: if the protocol version could not be negotiated.
-    """
-
-    return Connection.open(address, **settings)
 
 
 class Connection:
@@ -820,15 +795,60 @@ class Connection:
     socket is owned by this Connection instance...
     """
 
+    # Maximum size of a single data chunk.
+    max_chunk_size = 65535
+
+    # Timeout for socket operations, in seconds.
+    socket_timeout = 5.0
+
     @classmethod
-    def open(cls, address, **settings):
+    def default_address(cls):
+        return "localhost", 7687
+
+    @classmethod
+    def default_user_agent(cls):
+        """ Return the default user agent string for a Connection.
+        """
+        from boltkit.meta import package, version
+        return "{}/{}".format(package, version)
+
+    @classmethod
+    def fix_bolt_versions(cls, bolt_versions):
+        """ Using the requested Bolt versions, and falling back on the full
+        list available, generate a tuple of exactly four Bolt protocol
+        versions for use in version negotiation.
+        """
+        # Establish which protocol versions we want to attempt to use
+        if not bolt_versions:
+            bolt_versions = sorted([v for v, x in enumerate(CLIENT) if x is not None], reverse=True)
+        # Raise an error if we're including any non-supported versions
+        if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
+            raise ValueError("This client does not support all Bolt versions in %r" % bolt_versions)
+        # Ensure we send exactly 4 versions, padding with zeroes if necessary
+        return tuple(list(bolt_versions) + [0, 0, 0, 0])[:4]
+
+    @classmethod
+    def fix_address(cls, address):
+        if isinstance(address, tuple):
+            try:
+                host, port = address
+            except ValueError:
+                raise ValueError("Address tuples must be of length 2")
+        elif isinstance(address, str):
+            host, _, port = address.partition(":")
+        else:
+            raise ValueError("Illegal address value {}".format(address))
+        return host or "localhost", port or 7687
+
+    @classmethod
+    def open(cls, *addresses, **settings):
         """ Establish a connection to a Bolt server. It is here that we create a low-level socket
         connection and carry out version negotiation. Following this (and assuming success) a
         Connection instance will be returned.  This Connection takes ownership of the underlying
         socket and is subsequently responsible for managing its lifecycle.
 
         Args:
-            address: A tuple of host and port, such as ("127.0.0.1", 7687).
+            addresses: Tuples of host and port, such as ("127.0.0.1", 7687).
             settings: Settings for initialising the connection once established.
 
         Returns:
@@ -837,53 +857,45 @@ class Connection:
         Raises:
             ProtocolError: if the protocol version could not be negotiated.
         """
+        bolt_versions = cls.fix_bolt_versions(settings.get("bolt_versions"))
+        for address in addresses or [cls.default_address()]:
+            address = cls.fix_address(address)
 
-        # Establish a connection to the host and port specified
-        log.debug("~~ <CONNECT> %r", address)
-        socket = create_connection(address)
-        socket.settimeout(SOCKET_TIMEOUT)
+            # Establish a connection to the host and port specified
+            log.debug("~~ <CONNECT> %r", address)
+            socket = create_connection(address)
+            socket.settimeout(cls.socket_timeout)
 
-        log.debug("C: <BOLT> b'\\x%02x\\x%02x\\x%02x\\x%02x'", *BOLT)
-        socket.sendall(BOLT)
+            log.debug("C: <BOLT> b'\\x%02x\\x%02x\\x%02x\\x%02x'", *BOLT)
+            socket.sendall(BOLT)
 
-        # Establish which protocol versions we want to attempt to use
-        bolt_versions = settings.get("bolt_versions")
-        if not bolt_versions:
-            bolt_versions = sorted([v for v, x in enumerate(CLIENT) if x is not None], reverse=True)
-        # Raise an error if we're including any non-supported versions
-        if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
-            raise ProtocolError("Unknown Bolt versions in %r" % bolt_versions)
-        # Ensure we send exactly 4 versions, padding with zeroes if necessary
-        bolt_versions = (list(bolt_versions) + [0, 0, 0, 0])[:4]
-        # Send the protocol versions to the server
-        log.debug("C: <VERSION> %r", bolt_versions)
-        socket.sendall(b"".join(raw_pack(UINT_32, version) for version in bolt_versions))
+            # Send the protocol versions to the server
+            log.debug("C: <VERSION> %r", bolt_versions)
+            socket.sendall(b"".join(raw_pack(UINT_32, version) for version in bolt_versions))
 
-        # Handle the handshake response
-        raw_bolt_version = socket.recv(4)
-        bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
-        log.debug("S: <VERSION> %d", bolt_version)
-
-        if bolt_version > 0 and bolt_version in bolt_versions:
-            return cls(socket, bolt_version, **settings)
-        else:
+            # Handle the handshake response
+            raw_bolt_version = socket.recv(4)
+            if len(raw_bolt_version) == 4:
+                bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
+                log.debug("S: <VERSION> %d", bolt_version)
+                if bolt_version > 0 and bolt_version in bolt_versions:
+                    return cls(socket, bolt_version, **settings)
             log.error("~~ <CLOSE> Could not negotiate protocol version")
             socket.close()
-            raise ProtocolError("Could not negotiate protocol version")
+        raise ProtocolError("Could not establish a successful connection to any available address")
 
     def __init__(self, socket, bolt_version, **settings):
         self.socket = socket
         self.bolt_version = bolt_version
         self.requests = []
         self.responses = []
-        user = settings.get("user", "neo4j")
-        password = settings.get("password", "password")
-        user_agent = settings.get("user_agent", DEFAULT_USER_AGENT)
+        auth = settings.get("auth")
+        user_agent = settings.get("user_agent", self.default_user_agent())
         if bolt_version >= 3:
             args = {
                 "scheme": "basic",
-                "principal": user,
-                "credentials": password,
+                "principal": auth[0],
+                "credentials": auth[1],
                 "user_agent": user_agent,
             }
             log.debug("C: HELLO %r" % dict(args, credentials="..."))
@@ -891,8 +903,8 @@ class Connection:
         else:
             auth_token = {
                 "scheme": "basic",
-                "principal": settings.get("user", "neo4j"),
-                "credentials": settings.get("password", "password"),
+                "principal": auth[0],
+                "credentials": auth[1],
             }
             log.debug("C: INIT %r %r", user_agent, dict(auth_token, credentials="..."))
             request = Structure(CLIENT[self.bolt_version]["INIT"], user_agent, auth_token)
@@ -1004,8 +1016,8 @@ class Connection:
         while self.requests:
             request = self.requests.pop(0)
             request_data = packed(request)
-            for offset in range(0, len(request_data), MAX_CHUNK_SIZE):
-                end = offset + MAX_CHUNK_SIZE
+            for offset in range(0, len(request_data), self.max_chunk_size):
+                end = offset + self.max_chunk_size
                 chunk = request_data[offset:end]
                 data.append(raw_pack(UINT_16, len(chunk)))
                 data.append(chunk)

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+ROOT=$(dirname "$0")/..
+SCRIPT=$(basename "$0")
+DIST="${ROOT}/dist"
+STATUS=0
+
+VERSION="$1"
+if [ "${VERSION}" == "" ]
+then
+    echo "usage: ${SCRIPT} VERSION"
+    exit 1
+else
+    source "${ROOT}/bin/dist-functions"
+    check_file "${DIST}/boltkit-${VERSION}.tar.gz"
+fi
+
+exit ${STATUS}

@@ -21,7 +21,7 @@
 
 from unittest import TestCase
 
-from boltkit.client import connect
+from boltkit.client import Connection
 from boltkit.server import stub_test
 
 
@@ -31,7 +31,7 @@ class ReturnOneTestCase(TestCase):
     def test_v1(self, server):
 
         # Given
-        with connect(server.address, **server.settings) as cx:
+        with Connection.open(server.address, **server.settings) as cx:
 
             # When
             records = []
@@ -48,7 +48,7 @@ class ReturnOneTestCase(TestCase):
     def test_v2(self, server):
 
         # Given
-        with connect(server.address, **server.settings) as cx:
+        with Connection.open(server.address, **server.settings) as cx:
 
             # When
             records = []
@@ -65,7 +65,7 @@ class ReturnOneTestCase(TestCase):
     def test_v3(self, server):
 
         # Given
-        with connect(server.address, **server.settings) as cx:
+        with Connection.open(server.address, **server.settings) as cx:
 
             # When
             records = []
@@ -82,7 +82,7 @@ class ReturnOneTestCase(TestCase):
     def test_v4(self, server):
 
         # Given
-        with connect(server.address, **server.settings) as cx:
+        with Connection.open(server.address, **server.settings) as cx:
 
             # When
             records = []
@@ -99,7 +99,7 @@ class ReturnOneTestCase(TestCase):
     def test_v4_explicit(self, server):
 
         # Given
-        with connect(server.address, **server.settings) as cx:
+        with Connection.open(server.address, **server.settings) as cx:
 
             # When
             records = []

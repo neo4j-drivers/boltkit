@@ -21,7 +21,7 @@
 
 from unittest import TestCase
 
-from boltkit.client import connect, packed
+from boltkit.client import Connection, packed
 from boltkit.bytetools import h
 
 
@@ -50,5 +50,5 @@ class ConnectionTestCase(TestCase):
     def test_connect_and_disconnect(self):
         from boltkit.watcher import watch
         watch("boltkit.connector")
-        with connect(("localhost", 7687), user="neo4j", password="password") as cx:
+        with Connection.open(("localhost", 7687), user="neo4j", password="password") as cx:
             self.assertEqual(cx.version, 3)

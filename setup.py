@@ -21,11 +21,13 @@
 
 from setuptools import setup, find_packages
 
+from boltkit.meta import package, version
+
 
 packages = find_packages(exclude=("test", "test.*"))
 package_metadata = {
-    "name": "boltkit",
-    "version": "2.0.0",
+    "name": package,
+    "version": version,
     "description": "Toolkit for Neo4j 3.0+ driver authors",
     "author": "Neo4j",
     "author_email": "drivers@neo4j.com",
