@@ -21,7 +21,6 @@
 
 from logging import getLogger
 from threading import Thread
-from time import sleep
 
 from docker import DockerClient
 
