@@ -19,6 +19,7 @@
 # limitations under the License.
 
 
+from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
 from time import sleep
@@ -26,11 +27,17 @@ from uuid import uuid4
 
 import click
 
-from .client import Connection
+from .addressing import AddrParamType
+from .client import Connection, Addr
 from .containers import Neo4jService
 from .dist import Distributor
+from .auth import AuthParamType
 from .server import ProxyServer, StubServer
 from .watcher import watch
+
+
+def watch_log(ctx, param, value):
+    watch("boltkit", DEBUG if value >= 2 else INFO)
 
 
 @click.group()
@@ -39,22 +46,19 @@ def bolt():
 
 
 @bolt.command(help="Run a Bolt client")
+@click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH")
 @click.option("-b", "--bolt-version", default=0, type=int)
-@click.option("-a", "--addresses", multiple=True)
+@click.option("-s", "--server-addr", type=AddrParamType(), envvar="NEO4J_SERVER_ADDR")
 @click.option("-t", "--transaction", is_flag=True)
-@click.option("-u", "--user", default="neo4j", show_default=True)
-@click.option("-v", "--verbose", is_flag=True)
-@click.password_option("-p", "--password", confirmation_prompt=False)
+@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("cypher", nargs=-1)
-def client(cypher, addresses, user, password, transaction, verbose, bolt_version):
-    if verbose:
-        watch("bolt.client")
+def client(cypher, server_addr, auth, transaction, bolt_version):
     if bolt_version:
         bolt_versions = [bolt_version]
     else:
         bolt_versions = None
     try:
-        with Connection.open(*addresses, user=user, password=password, bolt_versions=bolt_versions) as cx:
+        with Connection.open(*server_addr or (), auth=auth, bolt_versions=bolt_versions) as cx:
             records = []
             if transaction:
                 cx.begin()
@@ -68,18 +72,16 @@ def client(cypher, addresses, user, password, transaction, verbose, bolt_version
             for record in records:
                 click.echo("\t".join(map(str, record)))
     except Exception as e:
-        click.echo(" ".join(e.args))
+        click.echo(" ".join(map(str, e.args)))
         exit(1)
 
 
 @bolt.command(help="Run a Bolt stub server")
 @click.option("-H", "--bind-host", default="localhost", show_default=True)
 @click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
-@click.option("-v", "--verbose", is_flag=True)
+@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("script")
-def stub(bind_host, bind_port, script, verbose):
-    if verbose:
-        watch("bolt.server")
+def stub(bind_host, bind_port, script):
     stub_server = StubServer((bind_host, bind_port), script)
     stub_server.start()
     try:
@@ -93,10 +95,10 @@ def stub(bind_host, bind_port, script, verbose):
 @bolt.command(help="Run a Bolt proxy server")
 @click.option("-H", "--bind-host", default="localhost", show_default=True)
 @click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
-@click.option("-h", "--server-host", default="localhost", show_default=True)
-@click.option("-p", "--server-port", default=7687, type=int, show_default=True)
-def proxy(bind_host, bind_port, server_host, server_port):
-    proxy_server = ProxyServer((bind_host, bind_port), (server_host, server_port))
+@click.option("-s", "--server-addr", type=AddrParamType(), envvar="NEO4J_SERVER_ADDR")
+@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
+def proxy(bind_host, bind_port, server_addr):
+    proxy_server = ProxyServer((bind_host, bind_port), server_addr)
     proxy_server.start()
 
 
@@ -116,6 +118,7 @@ def dist():
 @click.option("-e", "--enterprise", is_flag=True)
 @click.option("-s", "--s3", is_flag=True)
 @click.option("-t", "--teamcity", is_flag=True)
+@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.option("-w", "--windows", is_flag=True)
 @click.argument("version")
 def get(version, enterprise, s3, teamcity, windows):
@@ -133,48 +136,47 @@ def get(version, enterprise, s3, teamcity, windows):
         else:
             distributor.download(edition, version, package_format)
     except Exception as e:
-        click.echo(" ".join(e.args))
+        click.echo(" ".join(map(str, e.args)))
         exit(1)
 
 
 @bolt.command(context_settings=dict(
     ignore_unknown_options=True,
 ), help="""\
-Run a Neo4j standalone server or cluster.
+Run a Neo4j cluster or standalone server.
 """)
+@click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH")
 @click.option("-c", "--cores", type=int, default=0)
 @click.option("-i", "--image", default="latest", show_default=True)
 @click.option("-n", "--name")
-@click.option("-p", "--password")
 @click.option("-r", "--read-replicas", type=int, default=0)
-@click.option("-v", "--verbose", is_flag=True)
+@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def server(command, cores, image, name, password, read_replicas, verbose):
-    if verbose:
-        watch("boltkit.containers")
+def server(command, cores, image, name, auth, read_replicas):
     try:
         with Neo4jService(name or uuid4().hex[-7:],
                           n_cores=cores,
                           n_replicas=read_replicas,
                           image=image,
-                          password=password or uuid4().hex) as neo4j:
-            addr = " ".join(":".join(map(str, router.bolt_address)) for router in neo4j.routers)
-            auth = ":".join(neo4j.machines[0].auth)
+                          auth=auth,
+                          ) as neo4j:
+            addr = Addr(" ".join(map(str, (router.address for router in neo4j.routers))))
+            auth = "{}:{}".format(neo4j.machines[0].auth.user, neo4j.machines[0].auth.password)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={
-                    "NEO4J_ADDR": addr,
+                    "NEO4J_SERVER_ADDR": str(addr),
                     "NEO4J_AUTH": auth,
                 })
             else:
-                click.echo("Neo4j available at {}".format(addr))
+                click.echo("NEO4J_SERVER_ADDR='{}'".format(addr))
+                click.echo("NEO4J_AUTH='{}'".format(auth))
                 click.echo("Press Ctrl+C to exit")
-                try:
-                    while True:
-                        sleep(0.1)
-                except KeyboardInterrupt:
-                    click.echo("\rShutting down Neo4j")
+                while True:
+                    sleep(0.1)
+    except KeyboardInterrupt:
+        exit(0)
     except Exception as e:
-        click.echo(" ".join(e.args))
+        click.echo(" ".join(map(str, e.args)))
         exit(1)
 
 

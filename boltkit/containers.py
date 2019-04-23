@@ -21,14 +21,15 @@
 
 from logging import getLogger
 from threading import Thread
-from time import sleep, time
+from time import sleep
 
 from docker import DockerClient
 
-from boltkit.client import Connection
+from boltkit.auth import make_auth
+from boltkit.client import Addr, Connection
 
 
-log = getLogger("boltkit.containers")
+log = getLogger("boltkit")
 
 
 class Neo4jMachine:
@@ -37,41 +38,36 @@ class Neo4jMachine:
 
     repository = "neo4j"
 
-    server_start_timeout = 120
+    ip_address = None
 
-    def __init__(self, name, network, image, bolt_address, http_address, auth, **config):
+    ready = 0
+
+    def __init__(self, name, service_name, image, bolt_address, http_address, auth, **config):
         self.name = name
-        self.network = network
+        self.service_name = service_name
         self.image = "{}:{}".format(self.repository, image)
-        self.bolt_address = bolt_address
-        self.http_address = http_address
-        self.auth = auth
+        self.address = Addr([bolt_address])
+        self.auth = auth or make_auth()
         self.docker = DockerClient.from_env()
-        environment = {
-            "NEO4J_AUTH": "/".join(self.auth),
-            "NEO4J_ACCEPT_LICENSE_AGREEMENT": "yes",
-        }
+        environment = {}
+        if self.auth:
+            environment["NEO4J_AUTH"] = "{}/{}".format(self.auth.user, self.auth.password)
+        if "enterprise" in image:
+            environment["NEO4J_ACCEPT_LICENSE_AGREEMENT"] = "yes"
         for key, value in config.items():
             environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
         ports = {
-            "7474/tcp": self.http_address,
-            "7687/tcp": self.bolt_address,
+            "7474/tcp": http_address,
+            "7687/tcp": bolt_address,
         }
+        self.name = "{}.{}".format(self.name, self.service_name)
         self.container = self.docker.containers.create(self.image,
                                                        detach=True,
                                                        environment=environment,
-                                                       hostname="{}.{}".format(self.name, self.network.name),
-                                                       name="{}.{}".format(self.name, self.network.name),
-                                                       network=self.network.name,
+                                                       hostname=self.name,
+                                                       name=self.name,
+                                                       network=self.service_name,
                                                        ports=ports)
-
-        self.ip_address = None
-
-    def __del__(self):
-        try:
-            self.container.remove()
-        except AttributeError:
-            pass
 
     def __hash__(self):
         return hash(self.container)
@@ -80,26 +76,30 @@ class Neo4jMachine:
         return "%s(...)" % self.__class__.__name__
 
     def start(self):
-        log.debug("Starting Docker container %r with image %r", self.container.name, self.image)
+        log.info("Starting machine %r at %r", self.name, self.address)
         self.container.start()
         self.container.reload()
-        self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.network.name]["IPAddress"]
+        self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.service_name]["IPAddress"]
 
-    def await_ready(self):
-        log.debug("Waiting for server %r on address %r to become available", self.container.name, self.ip_address)
-        t0 = time()
-        while time() < t0 + self.server_start_timeout:
-            try:
-                Connection.open(self.bolt_address, auth=self.auth).close()
-            except OSError:
-                sleep(1)
+    def await_ready(self, timeout):
+        try:
+            Connection.open(*self.address, auth=self.auth, timeout=timeout).close()
+        except OSError:
+            self.container.reload()
+            state = self.container.attrs["State"]
+            if state["Status"] == "exited":
+                self.ready = -1
+                log.error("Machine %r exited with code %r" % (self.name, state["ExitCode"]))
+                for line in self.container.logs().splitlines():
+                    log.error("> %s" % line.decode("utf-8"))
             else:
-                log.debug("Server %r is now available", self.container.name)
-                return
-        raise RuntimeError("Server %r did not become available in %r seconds" % (self.container.name, self.server_start_timeout))
+                log.error("Machine %r did not become available within %rs" % (self.name, timeout))
+        else:
+            self.ready = 1
+            # log.info("Machine %r available", self.name)
 
     def stop(self):
-        log.debug("Stopping Docker container %r", self.container.name)
+        log.info("Stopping machine %r", self.name)
         self.container.stop()
 
 
@@ -121,56 +121,60 @@ class Neo4jService:
             return object.__new__(Neo4jStandaloneService)
 
     def __init__(self, name, **parameters):
+        self.name = name
         self.docker = DockerClient.from_env()
         self.image = self.fix_image(parameters.get("image"))
-        self.user = parameters.get("user", "neo4j")
-        self.password = parameters.get("password", "password")
-        self.network = self.docker.networks.create(name)
+        self.auth = parameters.get("auth")
         self.machines = []
         self.routers = []
         self.bolt_port_range = range(17600, 17700)
         self.http_port_range = range(17400, 17500)
-
-    def __del__(self):
-        try:
-            self.network.remove()
-        except AttributeError:
-            pass
+        self.network = None
 
     def __enter__(self):
-        self.start()
-        self.await_ready()
-        return self
+        try:
+            self.start()
+            self.await_ready()
+        except KeyboardInterrupt:
+            self.stop()
+            raise
+        else:
+            return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-    def start(self):
+    def _for_each_machine(self, f):
         threads = []
         for machine in self.machines:
-            thread = Thread(target=machine.start)
+            thread = Thread(target=f(machine))
+            thread.daemon = True
             thread.start()
             threads.append(thread)
         for thread in threads:
             thread.join()
+
+    def start(self):
+        log.info("Starting service %r with image %r", self.name, self.image)
+        self.network = self.docker.networks.create(self.name)
+        self._for_each_machine(lambda machine: machine.start)
 
     def await_ready(self):
-        threads = []
-        for machine in self.machines:
-            thread = Thread(target=machine.await_ready)
-            thread.start()
-            threads.append(thread)
-        for thread in threads:
-            thread.join()
+
+        def wait(machine):
+            machine.await_ready(timeout=300)
+
+        self._for_each_machine(wait)
+        if all(machine.ready == 1 for machine in self.machines):
+            log.info("Service %r available", self.name)
+        else:
+            log.error("Service %r unavailable - some machines failed", self.name)
+            raise OSError("Some machines failed")
 
     def stop(self):
-        threads = []
-        for machine in self.machines:
-            thread = Thread(target=machine.stop)
-            thread.start()
-            threads.append(thread)
-        for thread in threads:
-            thread.join()
+        log.info("Stopping service %r", self.name)
+        self._for_each_machine(lambda machine: machine.stop)
+        self.network.remove()
 
 
 class Neo4jStandaloneService(Neo4jService):
@@ -178,12 +182,12 @@ class Neo4jStandaloneService(Neo4jService):
     def __init__(self, name, **parameters):
         super().__init__(name, **parameters)
         self.machines.append(Neo4jMachine(
-            "z",
-            self.network,
+            "x",
+            name,
             self.image,
             bolt_address=("localhost", self.bolt_port_range[0]),
             http_address=("localhost", self.http_port_range[0]),
-            auth=(self.user, self.password),
+            auth=self.auth
         ))
         self.routers.extend(self.machines)
 
@@ -218,15 +222,15 @@ class Neo4jClusterService(Neo4jService):
         super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
         core_names = [chr(i) for i in range(97, 97 + n_cores)]
         replica_names = [chr(i) for i in range(48, 48 + n_replicas)]
-        q_core_names = ["{}.{}".format(name, self.network.name) for name in core_names]
+        q_core_names = ["{}.{}".format(name, self.name) for name in core_names]
         core_members = ["{}:5000".format(q_name) for q_name in q_core_names]
         self.machines.extend(Neo4jMachine(
             core_names[i],
-            self.network,
+            name,
             self.image,
             bolt_address=("localhost", self.bolt_port_range[i + 1]),
             http_address=("localhost", self.http_port_range[i + 1]),
-            auth=(self.user, self.password),
+            auth=self.auth,
             **{
                 "causal_clustering.initial_discovery_members": ",".join(core_members),
                 "causal_clustering.minimum_core_cluster_size_at_formation": n_cores,
@@ -238,11 +242,11 @@ class Neo4jClusterService(Neo4jService):
         self.routers.extend(self.machines)
         self.machines.extend(Neo4jMachine(
             replica_names[i],
-            self.network,
+            name,
             self.image,
             bolt_address=("localhost", self.bolt_port_range[i + 10]),
             http_address=("localhost", self.http_port_range[i + 10]),
-            auth=(self.user, self.password),
+            auth=self.auth,
             **{
                 "causal_clustering.initial_discovery_members": ",".join(core_members),
                 "dbms.connector.bolt.advertised_address": "localhost:{}".format(self.bolt_port_range[i + 10]),

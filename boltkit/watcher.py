@@ -132,7 +132,7 @@ class Watcher(object):
             pass
 
 
-def watch(logger_name, level=DEBUG, out=stdout):
+def watch(logger_name, level=INFO, out=stdout):
     """ Quick wrapper for using the Watcher.
 
     :param logger_name: name of logger to watch

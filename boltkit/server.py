@@ -27,20 +27,21 @@ from json import dumps as json_dumps
 
 from logging import getLogger
 from select import select
-from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error, SHUT_RDWR
+from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error, SHUT_RDWR, AF_INET, AF_INET6
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
 
-from .bytetools import h
-from .client import UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, Structure, Packed, UINT_32
-from .scripting import Script, ExitCommand
+from boltkit.bytetools import h
+from boltkit.packstream import UINT_16, UINT_32, INT_32, Packed, Structure, packed, unpacked
+from boltkit.client import CLIENT, SERVER, BOLT
+from boltkit.scripting import Script, ExitCommand
 
 
 TIMEOUT = 30
 
 
-log = getLogger("bolt.server")
+log = getLogger("boltkit")
 
 server_agents = {
     1: "Neo4j/3.0.0",
@@ -69,13 +70,13 @@ class ProxyPair(Thread):
         super(ProxyPair, self).__init__()
         self.client = client
         self.server = server
-        print("C: <CONNECT> {} -> {}".format(self.client.address, self.server.address))
-        print("C: <BOLT> {}".format(h(self.forward_bytes(client, server, 4))))
-        print("C: <VERSION> {}".format(h(self.forward_bytes(client, server, 16))))
+        log.debug("C: <CONNECT> {} -> {}".format(self.client.address, self.server.address))
+        log.debug("C: <BOLT> {}".format(h(self.forward_bytes(client, server, 4))))
+        log.debug("C: <VERSION> {}".format(h(self.forward_bytes(client, server, 16))))
         raw_bolt_version = self.forward_bytes(server, client, 4)
         bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
         self.client.bolt_version = self.server.bolt_version = bolt_version
-        print("S: <VERSION> {}".format(h(raw_bolt_version)))
+        log.debug("S: <VERSION> {}".format(h(raw_bolt_version)))
         self.client_messages = {v: k for k, v in CLIENT[self.client.bolt_version].items()}
         self.server_messages = {v: k for k, v in SERVER[self.server.bolt_version].items()}
 
@@ -88,7 +89,7 @@ class ProxyPair(Thread):
                 self.forward_exchange(client, server)
             except RuntimeError:
                 more = False
-        print("C: <CLOSE>")
+        log.debug("C: <CLOSE>")
 
     def forward_bytes(self, source, target, size):
         data = source.socket.recv(size)
@@ -115,13 +116,13 @@ class ProxyPair(Thread):
         rq_message = self.forward_message(client, server)
         rq_signature = rq_message[1]
         rq_data = Packed(rq_message[2:]).unpack_all()
-        print("C: {} {}".format(self.client_messages[rq_signature], " ".join(map(repr, rq_data))))
+        log.debug("C: {} {}".format(self.client_messages[rq_signature], " ".join(map(repr, rq_data))))
         more = True
         while more:
             rs_message = self.forward_message(server, client)
             rs_signature = rs_message[1]
             rs_data = Packed(rs_message[2:]).unpack_all()
-            print("S: {} {}".format(self.server_messages[rs_signature], " ".join(map(repr, rs_data))))
+            log.debug("S: {} {}".format(self.server_messages[rs_signature], " ".join(map(repr, rs_data))))
             more = rs_signature == 0x71
 
 
@@ -129,13 +130,14 @@ class ProxyServer(Thread):
 
     running = False
 
-    def __init__(self, bind_address, server_address):
+    def __init__(self, bind_address, server_addr):
         super(ProxyServer, self).__init__()
         self.socket = socket()
         self.socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.socket.bind(bind_address)
         self.socket.listen(0)
-        self.server_address = server_address
+        server_addr.resolve()
+        self.server_addr = server_addr[0]
         self.pairs = []
 
     def __del__(self):
@@ -145,10 +147,10 @@ class ProxyServer(Thread):
         self.running = True
         while self.running:
             client_socket, client_address = self.socket.accept()
-            server_socket = socket()
-            server_socket.connect(self.server_address)
+            server_socket = socket({2: AF_INET, 4: AF_INET6}[len(self.server_addr)])
+            server_socket.connect(self.server_addr)
             client = Peer(client_socket, client_address)
-            server = Peer(server_socket, self.server_address)
+            server = Peer(server_socket, self.server_addr)
             pair = ProxyPair(client, server)
             pair.start()
             self.pairs.append(pair)
