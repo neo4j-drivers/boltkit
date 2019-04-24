@@ -1,12 +1,14 @@
 # Boltkit
 
-Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
+Boltkit is a collection of utilities for Neo4j 3.0+ driver authors.
+The library exposes a set of command line tools as well as a full Python API for working with Neo4j-compatible clients and servers.
+
 
 **Contents**
 
 - [Installation](#installation)
-- [Demo Driver](#demo-driver)
-- [Statement Runner](#statement-runner)
+- [Environment Variables](#env-vars)
+- [Bolt Client](#bolt-client)
 - [Stub Bolt Server](#stub-bolt-server)
   - [Scripting](#stub-bolt-server/scripting)
   - [Command Line Usage](#stub-bolt-server/command-line-usage)
@@ -32,33 +34,37 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
 
 ## <a name="installation"></a>Installation
 
-The package can either be installed globally or within a *virtualenv*.
-Installation makes available several command line tools, the names of which all start with either `bolt` or `neoctrl`.
+The package can either be installed from PyPI and can either run globally or within a _virtualenv_.
+Installation makes available a versatile command line tool, called `bolt`.
+
+```bash
+$ pip install boltkit
+$ bolt --help
+Usage: bolt [OPTIONS] COMMAND [ARGS]...
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  client  Run a Bolt client
+  dist    List available Neo4j releases
+  get     Download Neo4j
+  proxy   Run a Bolt proxy server
+  server  Run a Neo4j cluster or standalone server.
+  stub    Run a Bolt stub server
 ```
-pip install --upgrade boltkit
-```
 
 
-## <a name="demo-driver"></a>Demo Driver 
+## <a name="env-vars"></a>Environment Variables
+_TODO_
 
-- Source: [`boltkit/driver.py`](boltkit/client.py)
+## <a name="bolt-client"></a>Bolt Client 
 
-This file contains both a fully-working Neo4j driver as well as a step-by-step tutorial for how to implement a driver in any language.
-To view the code and tutorial in a terminal, use:
-
-```
-less $(python -c "from boltkit import driver; print(driver.__file__)")
-```
-
-
-## <a name="statement-runner"></a>Statement Runner
-
-- Command: `boltrun <statement>`
-- Source: [`boltkit/runner.py`](boltkit/runner.py)
+The `bolt client` command allows 
 
 Example:
-```
-boltrun "UNWIND range(1, 10) AS n RETURN n"
+```bash 
+$ bolt client "UNWIND range(1, 10) AS n RETURN n"
 ```
 
 

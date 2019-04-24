@@ -316,7 +316,7 @@ class Connection:
     max_chunk_size = 65535
 
     # The default address list to use if no addresses are specified.
-    default_address_list = Addr("localhost:7687")
+    default_address_list = Addr("localhost:7687 localhost:17601")
 
     @classmethod
     def default_user_agent(cls):
@@ -401,12 +401,16 @@ class Connection:
         self.requests = []
         self.responses = []
         auth = settings.get("auth")
+        try:
+            user, password = auth
+        except (TypeError, ValueError):
+            user, password = "neo4j", ""
         user_agent = settings.get("user_agent", self.default_user_agent())
         if bolt_version >= 3:
             args = {
                 "scheme": "basic",
-                "principal": auth[0],
-                "credentials": auth[1],
+                "principal": user,
+                "credentials": password,
                 "user_agent": user_agent,
             }
             log.debug("C: HELLO %r" % dict(args, credentials="..."))
@@ -414,8 +418,8 @@ class Connection:
         else:
             auth_token = {
                 "scheme": "basic",
-                "principal": auth[0],
-                "credentials": auth[1],
+                "principal": user,
+                "credentials": password,
             }
             log.debug("C: INIT %r %r", user_agent, dict(auth_token, credentials="..."))
             request = Structure(CLIENT[self.bolt_version]["INIT"], user_agent, auth_token)

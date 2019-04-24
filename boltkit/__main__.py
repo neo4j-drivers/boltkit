@@ -31,13 +31,14 @@ from .addressing import AddrParamType
 from .client import Connection, Addr
 from .containers import Neo4jService
 from .dist import Distributor
-from .auth import AuthParamType
+from .auth import AuthParamType, Auth
 from .server import ProxyServer, StubServer
 from .watcher import watch
 
 
 def watch_log(ctx, param, value):
-    watch("boltkit", DEBUG if value >= 2 else INFO)
+    if value:
+        watch("boltkit", DEBUG if value >= 2 else INFO)
 
 
 @click.group()
@@ -53,6 +54,9 @@ def bolt():
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("cypher", nargs=-1)
 def client(cypher, server_addr, auth, transaction, bolt_version):
+    if auth is None:
+        auth = Auth(click.prompt("User", default="neo4j"),
+                    click.prompt("Password", hide_input=True))
     if bolt_version:
         bolt_versions = [bolt_version]
     else:
@@ -146,20 +150,17 @@ def get(version, enterprise, s3, teamcity, windows):
 Run a Neo4j cluster or standalone server.
 """)
 @click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH")
-@click.option("-c", "--cores", type=int, default=0)
-@click.option("-i", "--image", default="latest", show_default=True)
+@click.option("-B", "--bolt-port", type=int)
+@click.option("-c", "--n-cores", type=int)
+@click.option("-H", "--http-port", type=int)
+@click.option("-i", "--image")
 @click.option("-n", "--name")
-@click.option("-r", "--read-replicas", type=int, default=0)
+@click.option("-r", "--n-replicas", type=int)
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def server(command, cores, image, name, auth, read_replicas):
+def server(command, name, **parameters):
     try:
-        with Neo4jService(name or uuid4().hex[-7:],
-                          n_cores=cores,
-                          n_replicas=read_replicas,
-                          image=image,
-                          auth=auth,
-                          ) as neo4j:
+        with Neo4jService(name or uuid4().hex[-7:], **parameters) as neo4j:
             addr = Addr(" ".join(map(str, (router.address for router in neo4j.routers))))
             auth = "{}:{}".format(neo4j.machines[0].auth.user, neo4j.machines[0].auth.password)
             if command:
