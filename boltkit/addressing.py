@@ -24,7 +24,7 @@ from socket import getaddrinfo, SOCK_STREAM
 from click import ParamType
 
 
-class Addr(list):
+class AddressList(list):
 
     def __init__(self, iterable=None, default_host=None, default_port=None):
         if isinstance(iterable, str):
@@ -42,7 +42,7 @@ class Addr(list):
 
     def resolve(self, family=0):
         resolved = []
-        for i, item in enumerate(self):
+        for item in iter(self):
             parsed = parse_addr(item)
             host = parsed[0] or self.default_host
             port = parsed[1] or self.default_port
@@ -50,7 +50,7 @@ class Addr(list):
         self[:] = resolved
 
 
-class AddrParamType(ParamType):
+class AddressListParamType(ParamType):
 
     name = "addr"
 
@@ -59,7 +59,7 @@ class AddrParamType(ParamType):
         self.default_port = default_port or 7687
 
     def convert(self, value, param, ctx):
-        return Addr(value, self.default_host, self.default_port)
+        return AddressList(value, self.default_host, self.default_port)
 
     def __repr__(self):
         return 'HOST:PORT [HOST:PORT...]'
@@ -68,8 +68,11 @@ class AddrParamType(ParamType):
 def parse_addr(addr):
     if isinstance(addr, str):
         return addr.partition(":")[::2]
-    else:
+    elif isinstance(addr, tuple):
         return addr
+    else:
+        raise TypeError("Cannot parse address of type "
+                        "{}".format(addr.__class__.__name__))
 
 
 def format_addr(addr):

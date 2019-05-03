@@ -43,12 +43,3 @@ class PackerTestCase(TestCase):
     def test_mixed_list(self):
         self.assertEqual(h(packed([1, True, 3.14, "fünf"])),
                          '94:01:C3:C1:40:09:1E:B8:51:EB:85:1F:85:66:C3:BC:6E:66')
-
-
-class ConnectionTestCase(TestCase):
-
-    def test_connect_and_disconnect(self):
-        from boltkit.watcher import watch
-        watch("boltkit.connector")
-        with Connection.open(("localhost", 7687), user="neo4j", password="password") as cx:
-            self.assertEqual(cx.version, 3)

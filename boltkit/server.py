@@ -91,23 +91,26 @@ class ProxyPair(Thread):
                 more = False
         log.debug("C: <CLOSE>")
 
-    def forward_bytes(self, source, target, size):
+    @classmethod
+    def forward_bytes(cls, source, target, size):
         data = source.socket.recv(size)
         target.socket.sendall(data)
         return data
 
-    def forward_chunk(self, source, target):
-        chunk_header = self.forward_bytes(source, target, 2)
+    @classmethod
+    def forward_chunk(cls, source, target):
+        chunk_header = cls.forward_bytes(source, target, 2)
         if not chunk_header:
             raise RuntimeError()
         chunk_size = chunk_header[0] * 0x100 + chunk_header[1]
-        return self.forward_bytes(source, target, chunk_size)
+        return cls.forward_bytes(source, target, chunk_size)
 
-    def forward_message(self, source, target):
+    @classmethod
+    def forward_message(cls, source, target):
         d = b""
         size = -1
         while size:
-            data = self.forward_chunk(source, target)
+            data = cls.forward_chunk(source, target)
             size = len(data)
             d += data
         return d

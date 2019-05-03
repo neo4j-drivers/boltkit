@@ -22,12 +22,13 @@
 from logging import getLogger
 from math import ceil
 from threading import Thread
+from uuid import uuid4
 
 from docker import DockerClient
 from docker.errors import APIError
 
 from boltkit.auth import make_auth
-from boltkit.client import Addr, Connection
+from boltkit.client import AddressList, Connection
 
 
 log = getLogger("boltkit")
@@ -50,8 +51,8 @@ class Neo4jMachine:
         self.image = "{}:{}".format(self.docker_repository, image)
         self.bolt_port = bolt_port
         self.http_port = http_port
-        self.address = Addr([("localhost", self.bolt_port)])
-        self.auth = auth or make_auth()
+        self.address = AddressList([("localhost", self.bolt_port)])
+        self.auth = auth
         self.docker = DockerClient.from_env()
         environment = {}
         if self.auth:
@@ -128,11 +129,11 @@ class Neo4jService:
         else:
             return object.__new__(Neo4jStandaloneService)
 
-    def __init__(self, name, image=None, auth=None, **parameters):
-        self.name = name
+    def __init__(self, name=None, image=None, auth=None, **parameters):
+        self.name = name or uuid4().hex[-7:]
         self.docker = DockerClient.from_env()
         self.image = image or self.default_image
-        self.auth = auth
+        self.auth = auth or make_auth()
         self.machines = []
         self.routers = []
         self.network = None
@@ -191,14 +192,14 @@ class Neo4jService:
 
     @property
     def address(self):
-        return Addr(" ".join(map(str, (r.address for r in self.routers))))
+        return " ".join(map(str, (r.address for r in self.routers)))
 
 
 class Neo4jStandaloneService(Neo4jService):
 
     default_image = "latest"
 
-    def __init__(self, name, bolt_port=None, http_port=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, **parameters):
         super().__init__(name, **parameters)
         self.machines.append(Neo4jMachine(
             "z",
@@ -230,7 +231,7 @@ class Neo4jClusterService(Neo4jService):
     def _port_range(cls, base_port, count):
         return range(base_port, base_port + count)
 
-    def __init__(self, name, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, **parameters):
         super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
         self.n_cores = n_cores or self.min_cores
         self.n_replicas = n_replicas or self.min_replicas

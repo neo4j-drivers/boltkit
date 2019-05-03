@@ -27,8 +27,8 @@ from uuid import uuid4
 
 import click
 
-from .addressing import AddrParamType
-from .client import Connection, Addr
+from .addressing import AddressListParamType
+from .client import Connection, AddressList
 from .containers import Neo4jService
 from .dist import Distributor
 from .auth import AuthParamType, Auth
@@ -49,7 +49,7 @@ def bolt():
 @bolt.command(help="Run a Bolt client")
 @click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH")
 @click.option("-b", "--bolt-version", default=0, type=int)
-@click.option("-s", "--server-addr", type=AddrParamType(), envvar="NEO4J_SERVER_ADDR")
+@click.option("-s", "--server-addr", type=AddressListParamType(), envvar="NEO4J_SERVER_ADDR")
 @click.option("-t", "--transaction", is_flag=True)
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("cypher", nargs=-1)
@@ -99,7 +99,7 @@ def stub(bind_host, bind_port, script):
 @bolt.command(help="Run a Bolt proxy server")
 @click.option("-H", "--bind-host", default="localhost", show_default=True)
 @click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
-@click.option("-s", "--server-addr", type=AddrParamType(), envvar="NEO4J_SERVER_ADDR")
+@click.option("-s", "--server-addr", type=AddressListParamType(), envvar="NEO4J_SERVER_ADDR")
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 def proxy(bind_host, bind_port, server_addr):
     proxy_server = ProxyServer((bind_host, bind_port), server_addr)
@@ -160,9 +160,9 @@ Run a Neo4j cluster or standalone server.
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 def server(command, name, **parameters):
     try:
-        with Neo4jService(name or uuid4().hex[-7:], **parameters) as neo4j:
-            addr = Addr(" ".join(map(str, (router.address for router in neo4j.routers))))
-            auth = "{}:{}".format(neo4j.machines[0].auth.user, neo4j.machines[0].auth.password)
+        with Neo4jService(name, **parameters) as neo4j:
+            addr = AddressList(" ".join(map(str, (router.address for router in neo4j.routers))))
+            auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={
                     "NEO4J_SERVER_ADDR": str(addr),

@@ -69,7 +69,7 @@ from struct import pack as raw_pack, unpack_from as raw_unpack
 from time import perf_counter, sleep
 
 # ...and we'll borrow some things from other modules
-from boltkit.addressing import Addr
+from boltkit.addressing import AddressList
 from boltkit.packstream import UINT_16, UINT_32, Structure, packed, unpacked
 
 
@@ -316,7 +316,7 @@ class Connection:
     max_chunk_size = 65535
 
     # The default address list to use if no addresses are specified.
-    default_address_list = Addr("localhost:7687 localhost:17601")
+    default_address_list = AddressList("localhost:7687 localhost:17601")
 
     @classmethod
     def default_user_agent(cls):
@@ -337,21 +337,53 @@ class Connection:
                                     if x is not None], reverse=True)
         # Raise an error if we're including any non-supported versions
         if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
-            raise ValueError("This client does not support all Bolt versions in %r" % bolt_versions)
+            raise ValueError("This client does not support all "
+                             "Bolt versions in %r" % bolt_versions)
         # Ensure we send exactly 4 versions, padding with zeroes if necessary
         return tuple(list(bolt_versions) + [0, 0, 0, 0])[:4]
 
     @classmethod
-    def open(cls, *addresses, **settings):
+    def _open_to(cls, address, auth, user_agent, bolt_versions):
+        """ Attempt to open a connection to a Bolt server, given a single
+        socket address.
+        """
+        cx = None
+        handshake_data = BOLT + b"".join(raw_pack(UINT_32, version)
+                                         for version in bolt_versions)
+        s = socket(family={2: AF_INET, 4: AF_INET6}[len(address)])
+        try:
+            s.connect(address)
+            s.sendall(handshake_data)
+            raw_bolt_version = s.recv(4)
+            if raw_bolt_version:
+                bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
+                if bolt_version > 0 and bolt_version in bolt_versions:
+                    cx = cls(s, bolt_version, auth, user_agent)
+                else:
+                    log.error("Could not negotiate protocol version "
+                              "(outcome=%d)", bolt_version)
+            else:
+                pass  # recv returned empty, peer closed connection
+        finally:
+            if not cx:
+                s.close()
+        return cx
+
+    @classmethod
+    def open(cls, *addresses, auth, user_agent=None, bolt_versions=None,
+             timeout=0):
         """ Open a connection to a Bolt server. It is here that we create a
         low-level socket connection and carry out version negotiation.
         Following this (and assuming success) a Connection instance will be
-        returned.  This Connection takes ownership of the underlying socket
+        returned. This Connection takes ownership of the underlying socket
         and is subsequently responsible for managing its lifecycle.
 
         Args:
             addresses: Tuples of host and port, such as ("127.0.0.1", 7687).
-            settings: Settings for initialising the connection once established.
+            auth:
+            user_agent:
+            bolt_versions:
+            timeout:
 
         Returns:
             A connection to the Bolt server.
@@ -359,53 +391,45 @@ class Connection:
         Raises:
             ProtocolError: if the protocol version could not be negotiated.
         """
-        addresses = Addr(addresses or cls.default_address_list)
+        addresses = AddressList(addresses or cls.default_address_list)
         addresses.resolve()
         t0 = perf_counter()
-        bolt_versions = cls.fix_bolt_versions(settings.get("bolt_versions"))
-        handshake_data = BOLT + b"".join(raw_pack(UINT_32, version) for version in bolt_versions)
+        bolt_versions = cls.fix_bolt_versions(bolt_versions)
         log.info("Trying to open connection to %r", addresses)
         errors = set()
         again = True
         wait = 0.1
         while again:
             for address in addresses:
-                s = socket({2: AF_INET, 4: AF_INET6}[len(address)])
                 try:
-                    s.connect(address)
-                    s.sendall(handshake_data)
-                    raw_bolt_version = s.recv(4)
-                    if raw_bolt_version:
-                        bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
-                        if bolt_version > 0 and bolt_version in bolt_versions:
-                            return cls(s, bolt_version, **settings)
-                        else:
-                            log.error("Could not negotiate protocol version (outcome=%d)", bolt_version)
-                    else:
-                        pass  # recv returned empty, peer closed connection
+                    cx = cls._open_to(address, auth, user_agent, bolt_versions)
                 except OSError as e:
                     errors.add(" ".join(map(str, e.args)))
-                s.close()
-            again = perf_counter() - t0 < settings.get("timeout", 0)
+                else:
+                    if cx:
+                        return cx
+            again = perf_counter() - t0 < (timeout or 0)
             if again:
                 sleep(wait)
                 wait *= 2
-        log.error("Could not open connection (addresses=%r, errors=%r)", addresses, errors)
+        log.error("Could not open connection (addresses=%r, errors=%r)",
+                  addresses, errors)
         raise OSError("Could not open connection")
 
-    def __init__(self, s, bolt_version, **settings):
+    def __init__(self, s, bolt_version, auth, user_agent=None):
         self.socket = s
-        self.address = Addr([self.socket.getpeername()])
+        self.address = AddressList([self.socket.getpeername()])
         self.bolt_version = bolt_version
-        log.info("Opened connection to %r using Bolt v%d", self.address, self.bolt_version)
+        log.info("Opened connection to %r using Bolt v%d",
+                 self.address, self.bolt_version)
         self.requests = []
         self.responses = []
-        auth = settings.get("auth")
         try:
             user, password = auth
         except (TypeError, ValueError):
             user, password = "neo4j", ""
-        user_agent = settings.get("user_agent", self.default_user_agent())
+        if user_agent is None:
+            user_agent = self.default_user_agent()
         if bolt_version >= 3:
             args = {
                 "scheme": "basic",
