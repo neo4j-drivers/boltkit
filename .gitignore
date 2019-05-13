@@ -10,3 +10,6 @@ build
 
 neo4j-community-*
 neo4j-enterprise-*
+
+.coverage
+.tox

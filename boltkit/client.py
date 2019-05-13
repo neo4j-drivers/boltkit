@@ -316,7 +316,7 @@ class Connection:
     max_chunk_size = 65535
 
     # The default address list to use if no addresses are specified.
-    default_address_list = AddressList("localhost:7687 localhost:17601")
+    default_address_list = AddressList.parse("localhost:7687 localhost:17601")
 
     @classmethod
     def default_user_agent(cls):

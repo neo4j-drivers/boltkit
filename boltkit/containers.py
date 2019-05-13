@@ -19,6 +19,7 @@
 # limitations under the License.
 
 
+from itertools import chain
 from logging import getLogger
 from math import ceil
 from threading import Thread
@@ -192,7 +193,7 @@ class Neo4jService:
 
     @property
     def address(self):
-        return " ".join(map(str, (r.address for r in self.routers)))
+        return AddressList(chain(*(r.address for r in self.routers)))
 
 
 class Neo4jStandaloneService(Neo4jService):

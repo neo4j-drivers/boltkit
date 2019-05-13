@@ -1,0 +1,4 @@
+coverage
+pytest
+pytest-benchmark
+pytest-cov

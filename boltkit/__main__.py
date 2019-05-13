@@ -19,21 +19,36 @@
 # limitations under the License.
 
 
+from itertools import chain
 from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
 from time import sleep
-from uuid import uuid4
 
 import click
 
-from .addressing import AddressListParamType
-from .client import Connection, AddressList
+from .addressing import AddressList
+from .client import Connection
 from .containers import Neo4jService
 from .dist import Distributor
 from .auth import AuthParamType, Auth
 from .server import ProxyServer, StubServer
 from .watcher import watch
+
+
+class AddressListParamType(click.ParamType):
+
+    name = "addr"
+
+    def __init__(self, default_host=None, default_port=None):
+        self.default_host = default_host
+        self.default_port = default_port
+
+    def convert(self, value, param, ctx):
+        return AddressList.parse(value, self.default_host, self.default_port)
+
+    def __repr__(self):
+        return 'HOST:PORT [HOST:PORT...]'
 
 
 def watch_log(ctx, param, value):
@@ -161,7 +176,7 @@ Run a Neo4j cluster or standalone server.
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            addr = AddressList(" ".join(map(str, (router.address for router in neo4j.routers))))
+            addr = AddressList(chain(*(r.address for r in neo4j.routers)))
             auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={

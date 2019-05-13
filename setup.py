@@ -48,11 +48,11 @@ package_metadata = {
     },
     "packages": packages,
     "install_requires": [
-        "boto==2.48.0",
+        "boto~=2.48.0",
         "certifi",
-        "click<8,>=7",
+        "click~=7.0",
         "docker",
-        "urllib3",
+        "urllib3<1.25,>=1.21.1",
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [

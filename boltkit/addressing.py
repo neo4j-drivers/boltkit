@@ -25,62 +25,71 @@ from click import ParamType
 
 
 class AddressList(list):
+    """ A list of socket addresses, each as a tuple of the format expected by
+    the built-in `socket.connect` method.
+    """
+
+    @classmethod
+    def parse(cls, s, default_host=None, default_port=None):
+        """ Parse a string containing one or more socket addresses, each
+        separated by whitespace.
+        """
+        if isinstance(s, str):
+            parsed = []
+            for addr in s.split():
+                if addr.startswith("["):
+                    # IPv6
+                    host, _, port = addr[1:].rpartition("]")
+                    parsed.append((host, port.lstrip(":"), 0, 0))
+                else:
+                    # IPv4
+                    host, _, port = addr.partition(":")
+                    parsed.append((host, port))
+            return cls(parsed, default_host, default_port)
+        else:
+            raise TypeError("AddressList.parse requires a string argument")
 
     def __init__(self, iterable=None, default_host=None, default_port=None):
-        if isinstance(iterable, str):
-            super().__init__(iterable.split())
-        else:
-            super().__init__(iterable or ())
+        items = list(iterable or ())
+        for item in items:
+            if not isinstance(item, tuple):
+                raise TypeError("Object {!r} is not a valid address "
+                                "(tuple expected)".format(item))
+        super().__init__(items)
         self.default_host = default_host
         self.default_port = default_port
 
     def __str__(self):
-        return " ".join(map(format_addr, self))
+        s = []
+        for address in iter(self):
+            if len(address) == 4:
+                s.append("[{}]:{}".format(*address))
+            else:
+                s.append("{}:{}".format(*address))
+        return " ".join(s)
 
     def __repr__(self):
-        return "{}({!r})".format(self.__class__.__name__, str(self))
+        return "{}({!r})".format(self.__class__.__name__, list(self))
 
     def resolve(self, family=0):
+        """ Resolve all addresses into one or more resolved address tuples.
+        Each host name will resolve into one or more IP addresses, limited by
+        the given address `family` (if any). Each port value (either integer
+        or string) will resolve into an integer port value (e.g. 'http' will
+        resolve to 80).
+
+            >>> a = AddressList([("localhost", "http")])
+            >>> a.resolve()
+            >>> a
+            AddressList([('::1', 80, 0, 0), ('127.0.0.1', 80)])
+
+        """
         resolved = []
-        for item in iter(self):
-            parsed = parse_addr(item)
-            host = parsed[0] or self.default_host
-            port = parsed[1] or self.default_port
-            resolved.extend(addr for _, _, _, _, addr in getaddrinfo(host, port, family, SOCK_STREAM))
+        for address in iter(self):
+            host = address[0] or self.default_host or "localhost"
+            port = address[1] or self.default_port or 0
+            for _, _, _, _, addr in getaddrinfo(host, port, family,
+                                                SOCK_STREAM):
+                if addr not in resolved:
+                    resolved.append(addr)
         self[:] = resolved
-
-
-class AddressListParamType(ParamType):
-
-    name = "addr"
-
-    def __init__(self, default_host=None, default_port=None):
-        self.default_host = default_host or "localhost"
-        self.default_port = default_port or 7687
-
-    def convert(self, value, param, ctx):
-        return AddressList(value, self.default_host, self.default_port)
-
-    def __repr__(self):
-        return 'HOST:PORT [HOST:PORT...]'
-
-
-def parse_addr(addr):
-    if isinstance(addr, str):
-        return addr.partition(":")[::2]
-    elif isinstance(addr, tuple):
-        return addr
-    else:
-        raise TypeError("Cannot parse address of type "
-                        "{}".format(addr.__class__.__name__))
-
-
-def format_addr(addr):
-    if isinstance(addr, str):
-        return addr
-    elif isinstance(addr, tuple):
-        if len(addr) == 2:
-            return "{}:{}".format(*addr)
-        elif len(addr) == 4:
-            return "[{}]:{}".format(*addr)
-    return "?"
