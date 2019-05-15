@@ -22,14 +22,11 @@ language: python
         - libgnutls-dev
 jobs:
   include:
-#    - python: "2.7"
     - python: "3.4"
     - python: "3.5"
     - python: "3.6"
     - <<: *xenial-mixin
       python: "3.7"
-    - <<: *xenial-mixin
-      python: "nightly"
 
 env:
   - JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
