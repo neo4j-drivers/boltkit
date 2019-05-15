@@ -20,7 +20,7 @@
 
 
 from collections import deque
-from json import JSONDecoder, JSONDecodeError
+from json import JSONDecoder
 
 from boltkit.client import CLIENT, SERVER, MAX_BOLT_VERSION, Structure
 
@@ -76,7 +76,7 @@ class Script(object):
             data = data.lstrip()
             try:
                 decoded, end = decoder.raw_decode(data)
-            except JSONDecodeError:
+            except ValueError:
                 break
             else:
                 parsed.append(decoded)
