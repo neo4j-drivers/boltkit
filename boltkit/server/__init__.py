@@ -88,7 +88,7 @@ class Neo4jMachine:
                 pass
 
     def start(self):
-        log.info("Starting machine %r at %r", self.fq_name, self.address)
+        log.info("Starting machine %r at «%s»", self.fq_name, self.address)
         self.container.start()
         self.container.reload()
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.service_name]["IPAddress"]

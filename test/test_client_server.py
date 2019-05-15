@@ -22,7 +22,7 @@
 from unittest import TestCase
 
 from boltkit.client import Connection
-from boltkit.containers import Neo4jService
+from boltkit.server import Neo4jService
 
 
 class ClientServerTestCase(TestCase):

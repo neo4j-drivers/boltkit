@@ -3,6 +3,7 @@ branch = True
 source = boltkit
 omit =
     **/__main__.py
+    boltkit/obsolete/*
 
 [report]
 # Regexes for lines to exclude from consideration

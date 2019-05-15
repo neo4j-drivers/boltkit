@@ -19,9 +19,49 @@
 # limitations under the License.
 
 
-from socket import getaddrinfo, SOCK_STREAM
+from socket import getaddrinfo, SOCK_STREAM, AF_INET, AF_INET6
 
-from click import ParamType
+
+class Address(tuple):
+
+    @classmethod
+    def parse(cls, s, default_host=None, default_port=None):
+        if isinstance(s, str):
+            if s.startswith("["):
+                # IPv6
+                host, _, port = s[1:].rpartition("]")
+                return (host or default_host or "localhost",
+                        port.lstrip(":") or default_port or 0,
+                        0, 0)
+            else:
+                # IPv4
+                host, _, port = s.partition(":")
+                return (host or default_host or "localhost",
+                        port or default_port or 0)
+        else:
+            raise TypeError("Address.parse requires a string argument")
+
+    def __new__(cls, iterable):
+        n_parts = len(iterable)
+        if n_parts == 2:
+            inst = tuple.__new__(cls, iterable)
+            inst.family = AF_INET
+        elif n_parts == 4:
+            inst = tuple.__new__(cls, iterable)
+            inst.family = AF_INET6
+        else:
+            raise ValueError("Addresses must consist of either "
+                             "two parts (IPv4) or four parts (IPv6)")
+        return inst
+
+    def __str__(self):
+        if self.family == AF_INET6:
+            return "[{}]:{}".format(*self)
+        else:
+            return "{}:{}".format(*self)
+
+    def __repr__(self):
+        return "{}({!r})".format(self.__class__.__name__, tuple(self))
 
 
 class AddressList(list):
@@ -35,38 +75,21 @@ class AddressList(list):
         separated by whitespace.
         """
         if isinstance(s, str):
-            parsed = []
-            for addr in s.split():
-                if addr.startswith("["):
-                    # IPv6
-                    host, _, port = addr[1:].rpartition("]")
-                    parsed.append((host, port.lstrip(":"), 0, 0))
-                else:
-                    # IPv4
-                    host, _, port = addr.partition(":")
-                    parsed.append((host, port))
-            return cls(parsed, default_host, default_port)
+            return cls([Address.parse(a, default_host, default_port)
+                        for a in s.split()])
         else:
             raise TypeError("AddressList.parse requires a string argument")
 
-    def __init__(self, iterable=None, default_host=None, default_port=None):
+    def __init__(self, iterable=None):
         items = list(iterable or ())
         for item in items:
             if not isinstance(item, tuple):
                 raise TypeError("Object {!r} is not a valid address "
                                 "(tuple expected)".format(item))
         super().__init__(items)
-        self.default_host = default_host
-        self.default_port = default_port
 
     def __str__(self):
-        s = []
-        for address in iter(self):
-            if len(address) == 4:
-                s.append("[{}]:{}".format(*address))
-            else:
-                s.append("{}:{}".format(*address))
-        return " ".join(s)
+        return " ".join(str(Address(_)) for _ in self)
 
     def __repr__(self):
         return "{}({!r})".format(self.__class__.__name__, list(self))
@@ -86,8 +109,8 @@ class AddressList(list):
         """
         resolved = []
         for address in iter(self):
-            host = address[0] or self.default_host or "localhost"
-            port = address[1] or self.default_port or 0
+            host = address[0]
+            port = address[1]
             for _, _, _, _, addr in getaddrinfo(host, port, family,
                                                 SOCK_STREAM):
                 if addr not in resolved:

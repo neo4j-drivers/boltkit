@@ -19,7 +19,7 @@
 # limitations under the License.
 
 from os.path import join as path_join, realpath
-from boltkit.cluster import Cluster, create_sub_commands_description, DEFAULT_INITIAL_PORT
+from boltkit.obsolete.cluster import Cluster, create_sub_commands_description, DEFAULT_INITIAL_PORT
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from sys import stderr, argv
 from os import listdir

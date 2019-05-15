@@ -23,20 +23,40 @@ from socket import AF_INET, AF_INET6
 
 from pytest import raises
 
-from boltkit.addressing import AddressList
+from boltkit.addressing import Address, AddressList
 
 
-def test_ipv4_construction():
+def test_ipv4_address_construction():
+    a = Address(("127.0.0.1", 80))
+    assert a == ("127.0.0.1", 80)
+
+
+def test_ipv6_address_construction():
+    a = Address(("::1", 80, 0, 0))
+    assert a == ("::1", 80, 0, 0)
+
+
+def test_ipv4_address_list_construction():
     a = AddressList([("127.0.0.1", 80)])
     assert a == [("127.0.0.1", 80)]
 
 
-def test_ipv6_construction():
+def test_ipv6_address_list_construction():
     a = AddressList([("::1", 80, 0, 0)])
     assert a == [("::1", 80, 0, 0)]
 
 
-def test_illegal_type_in_construction():
+def test_illegal_type_in_address_construction():
+    with raises(TypeError):
+        _ = Address(object())
+
+
+def test_illegal_tuple_size_in_address_construction():
+    with raises(ValueError):
+        _ = Address(())
+
+
+def test_illegal_type_in_address_list_construction():
     with raises(TypeError):
         _ = AddressList([object()])
 
@@ -59,41 +79,32 @@ def test_ipv6_only_resolution():
     assert a == [('::1', 80, 0, 0)]
 
 
-def test_resolution_with_empty_host():
-    a = AddressList([("", "http")])
-    a.resolve()
-    assert a == [('::1', 80, 0, 0), ('127.0.0.1', 80)]
-
-
-def test_resolution_with_empty_port():
-    a = AddressList([("localhost", "")])
-    a.resolve()
-    assert a == [('::1', 0, 0, 0), ('127.0.0.1', 0)]
-
-
-def test_resolution_with_empty_host_and_port():
-    a = AddressList([("", "")])
-    a.resolve()
-    assert a == [('::1', 0, 0, 0), ('127.0.0.1', 0)]
-
-
-def test_resolution_with_defaults():
-    a = AddressList([("", "")], default_host="127.0.0.1", default_port=80)
-    a.resolve()
-    assert a == [('127.0.0.1', 80)]
-
-
 def test_parsing_empty_string():
     a = AddressList.parse("")
     assert a == []
 
 
 def test_parsing_ipv4_address():
+    a = Address.parse("127.0.0.1:80")
+    assert a == ('127.0.0.1', '80')
+
+
+def test_parsing_ipv6_address():
+    a = Address.parse("[::1]:80")
+    assert a == ('::1', '80', 0, 0)
+
+
+def test_illegal_type_in_address_parsing():
+    with raises(TypeError):
+        _ = Address.parse(object())
+
+
+def test_parsing_ipv4_address_list():
     a = AddressList.parse("127.0.0.1:80")
     assert a == [('127.0.0.1', '80')]
 
 
-def test_parsing_ipv6_address():
+def test_parsing_ipv6_address_list():
     a = AddressList.parse("[::1]:80")
     assert a == [('::1', '80', 0, 0)]
 
@@ -110,17 +121,32 @@ def test_parsing_host_and_port():
 
 def test_parsing_host_only():
     a = AddressList.parse("localhost")
-    assert a == [('localhost', '')]
+    assert a == [('localhost', 0)]
+
+
+def test_parsing_host_only_with_default_port():
+    a = AddressList.parse("localhost", default_port=80)
+    assert a == [('localhost', 80)]
 
 
 def test_parsing_port_only():
     a = AddressList.parse(":http")
-    assert a == [('', 'http')]
+    assert a == [('localhost', 'http')]
+
+
+def test_parsing_port_only_with_default_host():
+    a = AddressList.parse(":http", default_host="x")
+    assert a == [('x', 'http')]
 
 
 def test_parsing_empty_host_and_port():
     a = AddressList.parse(":")
-    assert a == [('', '')]
+    assert a == [('localhost', 0)]
+
+
+def test_parsing_empty_host_and_port_with_both_defaults():
+    a = AddressList.parse(":", default_host="x", default_port=80)
+    assert a == [('x', 80)]
 
 
 def test_illegal_type_in_parsing():
@@ -128,6 +154,16 @@ def test_illegal_type_in_parsing():
         _ = AddressList.parse(object())
 
 
-def test_string_repr():
+def test_ipv4_address_string_repr():
+    a = Address(('127.0.0.1', '80'))
+    assert str(a) == "127.0.0.1:80"
+
+
+def test_ipv6_address_string_repr():
+    a = Address(('::1', '80', 0, 0))
+    assert str(a) == "[::1]:80"
+
+
+def test_address_list_string_repr():
     a = AddressList([('127.0.0.1', '80'), ('::1', '80', 0, 0)])
     assert str(a) == "127.0.0.1:80 [::1]:80"

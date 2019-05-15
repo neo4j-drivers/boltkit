@@ -21,25 +21,25 @@
 
 from unittest import TestCase
 
-from boltkit.client import Connection, packed
-from boltkit.bytetools import h
+from boltkit.client import pack
+from boltkit.server.bytetools import h
 
 
 class PackerTestCase(TestCase):
 
     def test_integer(self):
-        self.assertEqual(h(packed(1)), '01')
-        self.assertEqual(h(packed(1234)), 'C9:04:D2')
+        self.assertEqual(h(pack(1)), '01')
+        self.assertEqual(h(pack(1234)), 'C9:04:D2')
 
     def test_float(self):
-        self.assertEqual(h(packed(6.283185307179586)), 'C1:40:19:21:FB:54:44:2D:18')
+        self.assertEqual(h(pack(6.283185307179586)), 'C1:40:19:21:FB:54:44:2D:18')
 
     def test_boolean(self):
-        self.assertEqual(h(packed(False)), 'C2')
+        self.assertEqual(h(pack(False)), 'C2')
 
     def test_string(self):
-        self.assertEqual(h(packed("Übergröße")), '8C:C3:9C:62:65:72:67:72:C3:B6:C3:9F:65')
+        self.assertEqual(h(pack("Übergröße")), '8C:C3:9C:62:65:72:67:72:C3:B6:C3:9F:65')
 
     def test_mixed_list(self):
-        self.assertEqual(h(packed([1, True, 3.14, "fünf"])),
+        self.assertEqual(h(pack([1, True, 3.14, "fünf"])),
                          '94:01:C3:C1:40:09:1E:B8:51:EB:85:1F:85:66:C3:BC:6E:66')

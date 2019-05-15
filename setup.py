@@ -33,16 +33,6 @@ package_metadata = {
     "author_email": "drivers@neo4j.com",
     "entry_points": {
         "console_scripts": [
-            "neoctrl-download = boltkit.controller:download",
-            "neoctrl-install = boltkit.controller:install",
-            "neoctrl-cluster = boltkit.cluster:cluster",
-            "neoctrl-multicluster = boltkit.multicluster:multicluster",
-            "neoctrl-start = boltkit.controller:start",
-            "neoctrl-stop = boltkit.controller:stop",
-            "neoctrl-set-initial-password = boltkit.controller:set_initial_password",
-            "neoctrl-create-user = boltkit.controller:create_user",
-            "neoctrl-configure = boltkit.controller:configure",
-            "neotest = boltkit.controller:test",
             "bolt = boltkit.__main__:bolt",
         ],
     },

@@ -27,13 +27,29 @@ from time import sleep
 
 import click
 
-from .addressing import AddressList
-from .client import Connection
-from .containers import Neo4jService
-from .dist import Distributor
-from .auth import AuthParamType, Auth
-from .server import ProxyServer, StubServer
-from .watcher import watch
+from boltkit.addressing import Address, AddressList
+from boltkit.auth import AuthParamType, Auth
+from boltkit.client import Connection
+from boltkit.dist import Distributor
+from boltkit.server import Neo4jService
+from boltkit.server.proxy import ProxyServer
+from boltkit.server.stub import StubServer
+from boltkit.watcher import watch
+
+
+class AddressParamType(click.ParamType):
+
+    name = "addr"
+
+    def __init__(self, default_host=None, default_port=None):
+        self.default_host = default_host
+        self.default_port = default_port
+
+    def convert(self, value, param, ctx):
+        return Address.parse(value, self.default_host, self.default_port)
+
+    def __repr__(self):
+        return 'HOST:PORT'
 
 
 class AddressListParamType(click.ParamType):
@@ -83,7 +99,7 @@ def client(cypher, server_addr, auth, transaction, bolt_version):
                 cx.begin()
             for statement in cypher:
                 cx.run(statement, {})
-                cx.pull(-1, records)
+                cx.pull(-1, -1, records)
             if transaction:
                 cx.commit()
             cx.send_all()
@@ -104,11 +120,10 @@ def stub(bind_host, bind_port, script):
     stub_server = StubServer((bind_host, bind_port), script)
     stub_server.start()
     try:
-        while stub_server.is_alive():
-            pass
+        stub_server.join()
     except KeyboardInterrupt:
         pass
-    exit(0 if not stub_server.script else 1)
+    exit(stub_server.exit_code)
 
 
 @bolt.command(help="Run a Bolt proxy server")

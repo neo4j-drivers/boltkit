@@ -22,7 +22,7 @@
 from unittest import TestCase
 
 from boltkit.client import Connection
-from boltkit.server import stub_test
+from boltkit.server.stub import stub_test
 
 
 class ReturnOneTestCase(TestCase):

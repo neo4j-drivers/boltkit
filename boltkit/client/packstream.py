@@ -93,7 +93,7 @@ class Structure:
         return not self.__eq__(other)
 
 
-def packed(*values):
+def pack(*values):
     """ This function provides PackStream values-to-bytes functionality, a
     process known as "packing". The tag of the method permits any number of
     values to be provided as positional arguments. Each will be serialised in
@@ -338,7 +338,7 @@ def packed(*values):
                 data.append(raw_pack(UINT_32, size))
             else:
                 raise ValueError("List too long to pack")
-            data.extend(map(packed, value))
+            data.extend(map(pack, value))
 
         # Dictionaries
         # ------------
@@ -394,7 +394,7 @@ def packed(*values):
                 data.append(raw_pack(UINT_32, size))
             else:
                 raise ValueError("Dictionary too long to pack")
-            data.extend(packed(k, v) for k, v in value.items())
+            data.extend(pack(k, v) for k, v in value.items())
 
         # Structures
         # ----------
@@ -441,7 +441,7 @@ def packed(*values):
             else:
                 raise ValueError("Structure too big to pack")
             data.append(raw_pack(UINT_8, value.tag))
-            data.extend(map(packed, value.fields))
+            data.extend(map(pack, value.fields))
 
         # For anything else, we'll just raise an error as we don't know how to
         # encode it.
@@ -455,7 +455,7 @@ def packed(*values):
     return b"".join(data)
 
 
-class Packed:
+class Unpackable:
     """ The Packed class provides a framework for "unpacking" packed data.
     Given a string of byte data and an initial offset, values can be extracted
     via the unpack method.
@@ -536,5 +536,5 @@ class Packed:
             yield next(self.unpack(1))
 
 
-def unpacked(data, offset=0):
-    return next(Packed(data, offset).unpack())
+def unpack(data, offset=0):
+    return next(Unpackable(data, offset).unpack())

@@ -71,7 +71,7 @@ $ bolt client "UNWIND range(1, 10) AS n RETURN n"
 ## <a name="stub-bolt-server"></a>Stub Bolt Server 
 
 - Command: `boltstub <port> <script>`
-- Source: [`boltkit/server.py`](boltkit/server.py)
+- Source: [`boltkit/server.py`](boltkit/server/stub.py)
 
 The stub Bolt server can be used as a testing resource for client software.
 Scripts can be created against which unit tests can be run without the need for a full Neo4j server.

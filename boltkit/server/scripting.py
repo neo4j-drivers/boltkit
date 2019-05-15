@@ -20,9 +20,9 @@
 
 
 from collections import deque
-from json import JSONDecoder
+from json import JSONDecoder, JSONDecodeError
 
-from .client import CLIENT, SERVER, MAX_BOLT_VERSION, Structure
+from boltkit.client import CLIENT, SERVER, MAX_BOLT_VERSION, Structure
 
 
 class Item(object):

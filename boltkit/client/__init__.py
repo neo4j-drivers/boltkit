@@ -70,7 +70,7 @@ from time import perf_counter, sleep
 
 # ...and we'll borrow some things from other modules
 from boltkit.addressing import AddressList
-from boltkit.packstream import UINT_16, UINT_32, Structure, packed, unpacked
+from boltkit.client.packstream import UINT_16, UINT_32, Structure, pack, unpack
 
 
 # CHAPTER 2: CONNECTIONS
@@ -316,7 +316,7 @@ class Connection:
     max_chunk_size = 65535
 
     # The default address list to use if no addresses are specified.
-    default_address_list = AddressList.parse("localhost:7687 localhost:17601")
+    default_address_list = AddressList.parse(":7687 :17601 :17687")
 
     @classmethod
     def default_user_agent(cls):
@@ -395,7 +395,7 @@ class Connection:
         addresses.resolve()
         t0 = perf_counter()
         bolt_versions = cls.fix_bolt_versions(bolt_versions)
-        log.info("Trying to open connection to %r", addresses)
+        log.info("Trying to open connection to «%s»", addresses)
         errors = set()
         again = True
         wait = 0.1
@@ -412,7 +412,7 @@ class Connection:
             if again:
                 sleep(wait)
                 wait *= 2
-        log.error("Could not open connection (addresses=%r, errors=%r)",
+        log.error("Could not open connection to «%s» (%r)",
                   addresses, errors)
         raise OSError("Could not open connection")
 
@@ -420,7 +420,7 @@ class Connection:
         self.socket = s
         self.address = AddressList([self.socket.getpeername()])
         self.bolt_version = bolt_version
-        log.info("Opened connection to %r using Bolt v%d",
+        log.info("Opened connection to «%s» using Bolt v%d",
                  self.address, self.bolt_version)
         self.requests = []
         self.responses = []
@@ -461,7 +461,7 @@ class Connection:
         self.close()
 
     def close(self):
-        log.info("Closing connection to %r", self.address)
+        log.info("Closing connection to «%s»", self.address)
         self.socket.close()
 
     def reset(self):
@@ -489,29 +489,54 @@ class Connection:
         self.responses.append(response)
         return response
 
-    def discard(self, n):
-        if self.bolt_version >= 4:
-            log.debug("C: DISCARD %r", n)
-            self.requests.append(Structure(CLIENT[self.bolt_version]["DISCARD"], n))
-        elif n >= 0:
-            raise ProtocolError("DISCARD <n> is not available in Bolt v%d" % self.bolt_version)
+    def discard(self, n, qid):
+        """ Enqueue a DISCARD message.
+
+        :param n: number of records to discard (-1 means all)
+        :param qid: the query for which to discard records (-1 means the query
+                    immediately preceding)
+        :return: :class:`.QueryResponse` object
+        """
+        v = self.bolt_version
+        if v >= 4:
+            args = {"n": n}
+            if qid >= 0:
+                args["qid"] = qid
+            log.debug("C: DISCARD %r", args)
+            self.requests.append(Structure(CLIENT[v]["DISCARD"], args))
+        elif n >= 0 or qid >= 0:
+            raise ProtocolError("Reactive DISCARD is not available in "
+                                "Bolt v%d" % v)
         else:
             log.debug("C: DISCARD_ALL")
-            self.requests.append(Structure(CLIENT[self.bolt_version]["DISCARD_ALL"]))
-        response = QueryResponse(self.bolt_version)
+            self.requests.append(Structure(CLIENT[v]["DISCARD_ALL"]))
+        response = QueryResponse(v)
         self.responses.append(response)
         return response
 
-    def pull(self, n, records):
-        if self.bolt_version >= 4:
-            log.debug("C: PULL %r", n)
-            self.requests.append(Structure(CLIENT[self.bolt_version]["PULL"], n))
-        elif n >= 0:
-            raise ProtocolError("PULL <n> is not available in Bolt v%d" % self.bolt_version)
+    def pull(self, n, qid, records):
+        """ Enqueue a PULL message.
+
+        :param n: number of records to pull (-1 means all)
+        :param qid: the query for which to pull records (-1 means the query
+                    immediately preceding)
+        :param records: list-like container into which records may be appended
+        :return: :class:`.QueryResponse` object
+        """
+        v = self.bolt_version
+        if v >= 4:
+            args = {"n": n}
+            if qid >= 0:
+                args["qid"] = qid
+            log.debug("C: PULL %r", args)
+            self.requests.append(Structure(CLIENT[v]["PULL"], args))
+        elif n >= 0 or qid >= 0:
+            raise ProtocolError("Reactive PULL is not available in "
+                                "Bolt v%d" % v)
         else:
             log.debug("C: PULL_ALL")
-            self.requests.append(Structure(CLIENT[self.bolt_version]["PULL_ALL"]))
-        response = QueryResponse(self.bolt_version, records)
+            self.requests.append(Structure(CLIENT[v]["PULL_ALL"]))
+        response = QueryResponse(v, records)
         self.responses.append(response)
         return response
 
@@ -554,7 +579,7 @@ class Connection:
         data = []
         while self.requests:
             request = self.requests.pop(0)
-            request_data = packed(request)
+            request_data = pack(request)
             for offset in range(0, len(request_data), self.max_chunk_size):
                 end = offset + self.max_chunk_size
                 chunk = request_data[offset:end]
@@ -575,7 +600,7 @@ class Connection:
             chunk_size, = raw_unpack(UINT_16, self.socket.recv(2))
             if chunk_size > 0:
                 data.append(self.socket.recv(chunk_size))
-        message = unpacked(b"".join(data))
+        message = unpack(b"".join(data))
 
         # Handle message
         response = self.responses[0]

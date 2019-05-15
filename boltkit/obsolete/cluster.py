@@ -23,7 +23,7 @@ from genericpath import isdir
 from itertools import count
 from os import listdir
 from os.path import join as path_join, realpath
-from boltkit import config as config
+from boltkit.obsolete import config as config
 from boltkit.controller import create_controller, wait_for_server
 
 try:
