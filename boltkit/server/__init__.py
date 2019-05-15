@@ -26,7 +26,7 @@ from threading import Thread
 from uuid import uuid4
 
 from docker import DockerClient
-from docker.errors import APIError
+from docker.errors import APIError, ImageNotFound
 
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
@@ -66,13 +66,21 @@ class Neo4jMachine:
             "7474/tcp": self.http_port,
             "7687/tcp": self.bolt_port,
         }
-        self.container = self.docker.containers.create(self.image,
-                                                       detach=True,
-                                                       environment=environment,
-                                                       hostname=self.fq_name,
-                                                       name=self.fq_name,
-                                                       network=self.service_name,
-                                                       ports=ports)
+
+        def create_container(img):
+            return self.docker.containers.create(img,
+                                                 detach=True,
+                                                 environment=environment,
+                                                 hostname=self.fq_name,
+                                                 name=self.fq_name,
+                                                 network=self.service_name,
+                                                 ports=ports)
+
+        try:
+            self.container = create_container(self.image)
+        except ImageNotFound:
+            self.docker.images.pull(self.image)
+            self.container = create_container(self.image)
 
     def __hash__(self):
         return hash(self.container)

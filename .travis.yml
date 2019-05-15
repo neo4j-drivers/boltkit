@@ -39,7 +39,6 @@ install:
   - sudo apt-get -qq update
   - sudo apt-get install -y openjdk-8-jdk --no-install-recommends
   - sudo pip install --quiet --upgrade pip tox tox-travis
-  - docker pull neo4j:latest
 
 script:
   - tox
