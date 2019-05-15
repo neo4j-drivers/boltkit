@@ -54,7 +54,7 @@ class Neo4jMachine:
         self.http_port = http_port
         self.address = AddressList([("localhost", self.bolt_port)])
         self.auth = auth
-        self.docker = DockerClient.from_env()
+        self.docker = DockerClient.from_env(version="auto")
         environment = {}
         if self.auth:
             environment["NEO4J_AUTH"] = "{}/{}".format(self.auth.user, self.auth.password)
@@ -132,7 +132,7 @@ class Neo4jService:
 
     def __init__(self, name=None, image=None, auth=None, **parameters):
         self.name = name or uuid4().hex[-7:]
-        self.docker = DockerClient.from_env()
+        self.docker = DockerClient.from_env(version="auto")
         self.image = image or self.default_image
         self.auth = auth or make_auth()
         self.machines = []
