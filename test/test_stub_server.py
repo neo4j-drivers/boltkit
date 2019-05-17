@@ -27,7 +27,7 @@ from boltkit.server.stub import stub_test
 
 class ReturnOneTestCase(TestCase):
 
-    @stub_test("scripts/v1/return_1.bolt")
+    @stub_test("scripts/v1/return_1_as_x.bolt")
     def test_v1(self, server):
 
         # Given
@@ -44,7 +44,7 @@ class ReturnOneTestCase(TestCase):
             self.assertEqual(records, [[1]])
             self.assertEqual(cx.bolt_version, 1)
 
-    @stub_test("scripts/v2/return_1.bolt")
+    @stub_test("scripts/v2/return_1_as_x.bolt")
     def test_v2(self, server):
 
         # Given
@@ -61,7 +61,7 @@ class ReturnOneTestCase(TestCase):
             self.assertEqual(records, [[1]])
             self.assertEqual(cx.bolt_version, 2)
 
-    @stub_test("scripts/v3/return_1.bolt")
+    @stub_test("scripts/v3/return_1_as_x.bolt")
     def test_v3(self, server):
 
         # Given
@@ -78,7 +78,7 @@ class ReturnOneTestCase(TestCase):
             self.assertEqual(records, [[1]])
             self.assertEqual(cx.bolt_version, 3)
 
-    @stub_test("scripts/v4/return_1.bolt")
+    @stub_test("scripts/v4/return_1_as_x.bolt")
     def test_v4(self, server):
 
         # Given
@@ -95,7 +95,7 @@ class ReturnOneTestCase(TestCase):
             self.assertEqual(records, [[1]])
             self.assertEqual(cx.bolt_version, 4)
 
-    @stub_test("scripts/v4/return_1_explicit.bolt")
+    @stub_test("scripts/v4/return_1_as_x_explicit.bolt")
     def test_v4_explicit(self, server):
 
         # Given

@@ -43,8 +43,6 @@ EXIT_OFF_SCRIPT = 1
 EXIT_TIMEOUT = 2
 EXIT_UNKNOWN = 99
 
-TIMEOUT = 30
-
 
 log = getLogger("boltkit")
 
@@ -74,19 +72,19 @@ class StubServer(Thread):
     peers = None
     script = Script()
 
-    def __init__(self, address, script_name=None, timeout=None):
+    def __init__(self, script_name=None, listen_addr=None, timeout=None):
         super(StubServer, self).__init__()
-        self.address = Address(address)
+        self.address = listen_addr or Address.parse(":17687")
         self.server = socket()
         self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        self.server.bind(self.address)
+        self.server.bind((self.address.host, self.address.port_number))
         self.server.listen(0)
         log.info("Listening for incoming connections on «%s»", self.address)
         self.peers = {}
         if script_name:
             self.script = Script(script_name)
         self.running = True
-        self.timeout = timeout or TIMEOUT
+        self.timeout = timeout
         self.exit_code = 0
 
     def run(self):
@@ -98,7 +96,8 @@ class StubServer(Thread):
                     for sock in read_list:
                         self.read(sock)
                 else:
-                    log.error("C: <TIMEOUT> %ds", self.timeout)
+                    log.error("Timed out after waiting %rs for an incoming "
+                              "connection", self.timeout)
                     raise SystemExit(EXIT_TIMEOUT)
             except SystemExit as e:
                 self.exit_code = e.args[0]

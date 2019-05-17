@@ -77,10 +77,12 @@ def bolt():
     pass
 
 
-@bolt.command(help="Run a Bolt client")
+@bolt.command(help="""\
+Run a Bolt client.
+""")
 @click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH")
 @click.option("-b", "--bolt-version", default=0, type=int)
-@click.option("-s", "--server-addr", type=AddressListParamType(), envvar="NEO4J_SERVER_ADDR")
+@click.option("-s", "--server-addr", type=AddressListParamType(), envvar="BOLT_SERVER_ADDR")
 @click.option("-t", "--transaction", is_flag=True)
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
 @click.argument("cypher", nargs=-1)
@@ -111,28 +113,52 @@ def client(cypher, server_addr, auth, transaction, bolt_version):
         exit(1)
 
 
-@bolt.command(help="Run a Bolt stub server")
-@click.option("-H", "--bind-host", default="localhost", show_default=True)
-@click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
-@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
+@bolt.command(help="""\
+Run a Bolt stub server.
+
+The stub server process listens for an incoming client connection and will 
+attempt to play through a pre-scripted exchange with that client. Any deviation
+from that script will result in a non-zero exit code. This utility is primarily
+useful for Bolt client integration testing.
+""")
+@click.option("-l", "--listen-addr", type=AddressParamType(),
+              envvar="BOLT_LISTEN_ADDR",
+              help="The address on which to listen for incoming connections "
+                   "in INTERFACE:PORT format, where INTERFACE may be omitted "
+                   "for 'localhost'. If completely omitted, this defaults to "
+                   "':17687'. The BOLT_LISTEN_ADDR environment variable may "
+                   "be used as an alternative to this option.")
+@click.option("-t", "--timeout", type=float,
+              help="The number of seconds for which the stub server will wait "
+                   "for an incoming connection before automatically "
+                   "terminating. If unspecified, the server will wait "
+                   "indefinitely.")
+@click.option("-v", "--verbose", count=True, callback=watch_log,
+              expose_value=False, is_eager=True,
+              help="Show more detail about the client-server exchange.")
 @click.argument("script")
-def stub(bind_host, bind_port, script):
-    stub_server = StubServer((bind_host, bind_port), script)
-    stub_server.start()
+def stub(script, listen_addr, timeout):
+    stub_server = StubServer(script, listen_addr, timeout=timeout)
     try:
+        stub_server.start()
         stub_server.join()
     except KeyboardInterrupt:
-        pass
-    exit(stub_server.exit_code)
+        exit(130)
+    except Exception as e:
+        click.echo(" ".join(map(str, e.args)), err=True)
+        exit(1)
+    finally:
+        exit(stub_server.exit_code)
 
 
-@bolt.command(help="Run a Bolt proxy server")
-@click.option("-H", "--bind-host", default="localhost", show_default=True)
-@click.option("-P", "--bind-port", default=17687, type=int, show_default=True)
-@click.option("-s", "--server-addr", type=AddressListParamType(), envvar="NEO4J_SERVER_ADDR")
+@bolt.command(help="""\
+Run a Bolt proxy server.
+""")
+@click.option("-l", "--listen-addr", type=AddressParamType(), envvar="BOLT_LISTEN_ADDR")
+@click.option("-s", "--server-addr", type=AddressListParamType(), envvar="BOLT_SERVER_ADDR")
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
-def proxy(bind_host, bind_port, server_addr):
-    proxy_server = ProxyServer((bind_host, bind_port), server_addr)
+def proxy(server_addr, listen_addr):
+    proxy_server = ProxyServer(server_addr, listen_addr)
     proxy_server.start()
 
 
@@ -143,12 +169,16 @@ def dist():
         for name, r in distributor.releases.items():
             if name == r.name.upper():
                 click.echo(r.name)
+    except KeyboardInterrupt:
+        exit(130)
     except Exception as e:
-        click.echo(" ".join(e.args))
+        click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
 
-@bolt.command(help="Download Neo4j")
+@bolt.command(help="""\
+Download Neo4j.
+""")
 @click.option("-e", "--enterprise", is_flag=True)
 @click.option("-s", "--s3", is_flag=True)
 @click.option("-t", "--teamcity", is_flag=True)
@@ -169,24 +199,61 @@ def get(version, enterprise, s3, teamcity, windows):
             distributor.download_from_teamcity(edition, version, package_format)
         else:
             distributor.download(edition, version, package_format)
+    except KeyboardInterrupt:
+        exit(130)
     except Exception as e:
-        click.echo(" ".join(map(str, e.args)))
+        click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
 
-@bolt.command(context_settings=dict(
-    ignore_unknown_options=True,
-), help="""\
-Run a Neo4j cluster or standalone server.
+@bolt.command(context_settings={"ignore_unknown_options": True}, help="""\
+Run a Neo4j cluster or standalone server in one or more local Docker 
+containers.
+
+If an additional COMMAND is supplied, this will be executed after startup, 
+with a shutdown occurring immediately afterwards. If no COMMAND is supplied,
+the service will remain available until manually shutdown by Ctrl+C.
+
+A couple of environment variables will also be made available to any COMMAND
+passed. These are:
+
+\b
+- BOLT_SERVER_ADDR
+- NEO4J_AUTH
 """)
-@click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH")
-@click.option("-B", "--bolt-port", type=int)
-@click.option("-c", "--n-cores", type=int)
-@click.option("-H", "--http-port", type=int)
-@click.option("-i", "--image")
-@click.option("-n", "--name")
-@click.option("-r", "--n-replicas", type=int)
-@click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
+@click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH",
+              help="Credentials with which to bootstrap the service. These "
+                   "must be specified as a 'user:password' pair and may "
+                   "alternatively be supplied via the NEO4J_AUTH environment "
+                   "variable. These credentials will also be exported to any "
+                   "COMMAND executed during the service run.")
+@click.option("-B", "--bolt-port", type=int,
+              help="A port number (standalone) or base port number (cluster) "
+                   "for Bolt traffic.")
+@click.option("-c", "--n-cores", type=int,
+              help="If specified, a cluster with this many cores will be "
+                   "created. If omitted, a standalone service will be created "
+                   "instead. See also -r for specifying the number of read "
+                   "replicas.")
+@click.option("-H", "--http-port", type=int,
+              help="A port number (standalone) or base port number (cluster) "
+                   "for HTTP traffic.")
+@click.option("-i", "--image",
+              help="The Docker image tag to use for building containers. The "
+                   "repository can also be included, but will default to "
+                   "'neo4j'. Note that a Neo4j Enterprise Edition image is "
+                   "required for building clusters.")
+@click.option("-n", "--name",
+              help="A Docker network name to which all servers will be "
+                   "attached. If omitted, an auto-generated name will be "
+                   "used.")
+@click.option("-r", "--n-replicas", type=int,
+              help="The number of read replicas to include within the "
+                   "cluster. This option will only take effect if -c is also "
+                   "used.")
+@click.option("-v", "--verbose", count=True, callback=watch_log,
+              expose_value=False, is_eager=True,
+              help="Show more detail about the startup and shutdown process.")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 def server(command, name, **parameters):
     try:
@@ -195,19 +262,19 @@ def server(command, name, **parameters):
             auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={
-                    "NEO4J_SERVER_ADDR": str(addr),
+                    "BOLT_SERVER_ADDR": str(addr),
                     "NEO4J_AUTH": auth,
                 })
             else:
-                click.echo("NEO4J_SERVER_ADDR='{}'".format(addr))
+                click.echo("BOLT_SERVER_ADDR='{}'".format(addr))
                 click.echo("NEO4J_AUTH='{}'".format(auth))
                 click.echo("Press Ctrl+C to exit")
                 while True:
                     sleep(0.1)
     except KeyboardInterrupt:
-        exit(0)
+        exit(130)
     except Exception as e:
-        click.echo(" ".join(map(str, e.args)))
+        click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
 

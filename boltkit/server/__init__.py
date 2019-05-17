@@ -39,8 +39,6 @@ class Neo4jMachine:
     """ A single Neo4j server instance, potentially part of a cluster.
     """
 
-    docker_repository = "neo4j"
-
     ip_address = None
 
     ready = 0
@@ -49,7 +47,7 @@ class Neo4jMachine:
         self.name = name
         self.service_name = service_name
         self.fq_name = "{}.{}".format(self.name, self.service_name)
-        self.image = "{}:{}".format(self.docker_repository, image)
+        self.image = image
         self.bolt_port = bolt_port
         self.http_port = http_port
         self.address = AddressList([("localhost", self.bolt_port)])
@@ -79,6 +77,7 @@ class Neo4jMachine:
         try:
             self.container = create_container(self.image)
         except ImageNotFound:
+            log.info("Downloading Docker image %r", self.image)
             self.docker.images.pull(self.image)
             self.container = create_container(self.image)
 
@@ -142,6 +141,8 @@ class Neo4jService:
         self.name = name or uuid4().hex[-7:]
         self.docker = DockerClient.from_env(version="auto")
         self.image = image or self.default_image
+        if ":" not in self.image:
+            self.image = "neo4j:" + image
         self.auth = auth or make_auth()
         self.machines = []
         self.routers = []
@@ -206,7 +207,7 @@ class Neo4jService:
 
 class Neo4jStandaloneService(Neo4jService):
 
-    default_image = "latest"
+    default_image = "neo4j:latest"
 
     def __init__(self, name=None, bolt_port=None, http_port=None, **parameters):
         super().__init__(name, **parameters)
@@ -223,7 +224,7 @@ class Neo4jStandaloneService(Neo4jService):
 
 class Neo4jClusterService(Neo4jService):
 
-    default_image = "enterprise"
+    default_image = "neo4j:enterprise"
 
     # The minimum and maximum number of cores permitted
     min_cores = 3

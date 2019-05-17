@@ -19,7 +19,7 @@
 # limitations under the License.
 
 
-from socket import getaddrinfo, SOCK_STREAM, AF_INET, AF_INET6
+from socket import getaddrinfo, getservbyname, SOCK_STREAM, AF_INET, AF_INET6
 
 
 class Address(tuple):
@@ -30,14 +30,14 @@ class Address(tuple):
             if s.startswith("["):
                 # IPv6
                 host, _, port = s[1:].rpartition("]")
-                return (host or default_host or "localhost",
-                        port.lstrip(":") or default_port or 0,
-                        0, 0)
+                return cls((host or default_host or "localhost",
+                            port.lstrip(":") or default_port or 0,
+                            0, 0))
             else:
                 # IPv4
                 host, _, port = s.partition(":")
-                return (host or default_host or "localhost",
-                        port or default_port or 0)
+                return cls((host or default_host or "localhost",
+                            port or default_port or 0))
         else:
             raise TypeError("Address.parse requires a string argument")
 
@@ -62,6 +62,26 @@ class Address(tuple):
 
     def __repr__(self):
         return "{}({!r})".format(self.__class__.__name__, tuple(self))
+
+    @property
+    def host(self):
+        return self[0]
+
+    @property
+    def port(self):
+        return self[1]
+
+    @property
+    def port_number(self):
+        try:
+            return getservbyname(self[1])
+        except (OSError, TypeError):
+            # OSError: service/proto not found
+            # TypeError: getservbyname() argument 1 must be str, not X
+            try:
+                return int(self[1])
+            except (TypeError, ValueError) as e:
+                raise type(e)("Unknown port value %r" % self[1])
 
 
 class AddressList(list):

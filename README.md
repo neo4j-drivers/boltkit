@@ -1,44 +1,19 @@
 # Boltkit
 
-Boltkit is a collection of utilities for Neo4j 3.0+ driver authors.
+Boltkit is a package of utilities for Neo4j driver authors.
 The library exposes a set of command line tools as well as a full Python API for working with Neo4j-compatible clients and servers.
 
 
-**Contents**
+## Installation
 
-- [Installation](#installation)
-- [Environment Variables](#env-vars)
-- [Bolt Client](#bolt-client)
-- [Stub Bolt Server](#stub-bolt-server)
-  - [Scripting](#stub-bolt-server/scripting)
-  - [Command Line Usage](#stub-bolt-server/command-line-usage)
-  - [Java Test Usage](#stub-bolt-server/java-test-usage)
-- [Neo4j Controller](#neo4j-controller)
-- [Single Server](#neo4j-controller)
-  - [`neoctrl-download`](#neo4j-controller/download)
-  - [`neoctrl-install`](#neo4j-controller/install)
-  - [`neoctrl-start`](#neo4j-controller/start)
-  - [`neoctrl-stop`](#neo4j-controller/stop)
-  - [`neoctrl-create-user`](#neo4j-controller/create-user)
-  - [`neoctrl-configure`](#neo4j-controller/configure)
-- [Cluster](#neo4j-controller/cluster)
-  - [`neoctrl-cluster install`](#neo4j-controller/cluster-install)
-  - [`neoctrl-cluster start`](#neo4j-controller/cluster-start)
-  - [`neoctrl-cluster stop`](#neo4j-controller/cluster-stop)
-- [Multi-Cluster](#neo4j-controller/multicluster)
-  - [`neoctrl-multicluster install`](#neo4j-controller/multicluster-install)
-  - [`neoctrl-multicluster start`](#neo4j-controller/multicluster-start)
-  - [`neoctrl-multicluster stop`](#neo4j-controller/multicluster-stop)
-----
-
-
-## <a name="installation"></a>Installation
-
-The package can either be installed from PyPI and can either run globally or within a _virtualenv_.
+The package can be found on PyPI and can either run globally or within a _virtualenv_.
 Installation makes available a versatile command line tool, called `bolt`.
 
 ```bash
 $ pip install boltkit
+```
+
+```bash
 $ bolt --help
 Usage: bolt [OPTIONS] COMMAND [ARGS]...
 
@@ -55,12 +30,27 @@ Commands:
 ```
 
 
-## <a name="env-vars"></a>Environment Variables
-_TODO_
+## Command Overview
 
-## <a name="bolt-client"></a>Bolt Client 
+### `bolt client` 
 
-The `bolt client` command allows 
+The `bolt client` command allows execution of a Cypher query against a Neo4j service.
+
+Synopsis:
+```bash
+$ bolt client --help
+Usage: bolt client [OPTIONS] [CYPHER]...
+
+  Run a Bolt client
+
+Options:
+  -a, --auth AUTH
+  -b, --bolt-version INTEGER
+  -s, --server-addr ADDR
+  -t, --transaction
+  -v, --verbose
+  --help                      Show this message and exit.
+```
 
 Example:
 ```bash 
@@ -68,13 +58,106 @@ $ bolt client "UNWIND range(1, 10) AS n RETURN n"
 ```
 
 
-## <a name="stub-bolt-server"></a>Stub Bolt Server 
+### `bolt dist`
 
-- Command: `boltstub <port> <script>`
-- Source: [`boltkit/server.py`](boltkit/server/stub.py)
+TODO
+
+
+### `bolt get`
+
+TODO
+
+
+### `bolt proxy`
+
+TODO
+
+
+### `bolt server`
+
+Run a Neo4j cluster or standalone server in one or more local Docker containers.
+
+Synopsis:
+```bash
+$ bolt server --help
+Usage: bolt server [OPTIONS] [COMMAND]...
+
+  Run a Neo4j cluster or standalone server in one or more local Docker
+  containers.
+
+  If an additional COMMAND is supplied, this will be executed after startup,
+  with a shutdown occurring immediately afterwards. If no COMMAND is
+  supplied, the service will remain available until manually shutdown by
+  Ctrl+C.
+
+  A couple of environment variables will also be made available to any
+  COMMAND passed. These are:
+
+  - BOLT_SERVER_ADDR
+  - NEO4J_AUTH
+
+Options:
+  -a, --auth AUTH           Credentials with which to bootstrap the service.
+                            These must be specified as a 'user:password' pair
+                            and may alternatively be supplied via the
+                            NEO4J_AUTH environment variable. These credentials
+                            will also be exported to any COMMAND executed
+                            during the service run.
+  -B, --bolt-port INTEGER   A port number (standalone) or base port number
+                            (cluster) for Bolt traffic.
+  -c, --n-cores INTEGER     If specified, a cluster with this many cores will
+                            be created. If omitted, a standalone service will
+                            be created instead. See also -r for specifying the
+                            number of read replicas.
+  -H, --http-port INTEGER   A port number (standalone) or base port number
+                            (cluster) for HTTP traffic.
+  -i, --image TEXT          The Docker image tag to use for building
+                            containers. The repository can also be included,
+                            but will default to 'neo4j'. Note that a Neo4j
+                            Enterprise Edition image is required for building
+                            clusters.
+  -n, --name TEXT           A Docker network name to which all servers will be
+                            attached. If omitted, an auto-generated name will
+                            be used.
+  -r, --n-replicas INTEGER  The number of read replicas to include within the
+                            cluster. This option will only take effect if -c
+                            is also used.
+  -v, --verbose             Show more detail about the startup and shutdown
+                            process.
+  --help                    Show this message and exit.
+```
+
+### `bolt stub` 
 
 The stub Bolt server can be used as a testing resource for client software.
 Scripts can be created against which unit tests can be run without the need for a full Neo4j server.
+
+Synopsis:
+```bash
+$ bolt stub --help
+Usage: bolt stub [OPTIONS] SCRIPT
+
+  Run a Bolt stub server.
+
+  The stub server process listens for an incoming client connection and will
+  attempt to play through a pre-scripted exchange with that client. Any
+  deviation from that script will result in a non-zero exit code. This
+  utility is primarily useful for Bolt client integration testing.
+
+Options:
+  -l, --listen-addr ADDR  The address on which to listen for incoming
+                          connections in INTERFACE:PORT format, where
+                          INTERFACE may be omitted for 'localhost'. If
+                          completely omitted, this defaults to ':17687'. The
+                          BOLT_LISTEN_ADDR environment variable may be used as
+                          an alternative to this option.
+  -t, --timeout FLOAT     The number of seconds for which the stub server will
+                          wait for an incoming connection before automatically
+                          terminating. If unspecified, the server will wait
+                          indefinitely.
+  -v, --verbose           Show more detail about the client-server exchange.
+  --help                  Show this message and exit.
+```
 
 A server script describes a conversation between client and server in terms of the messages
 exchanged. An example can be seen in the [`test/scripts/count.bolt`](test/scripts/count.bolt) file.
@@ -85,483 +168,23 @@ When the client closes its connection, the server will shut down.
 If any script lines remain, the server will exit with an error status; if none remain it will exit successfully.
 After 30 seconds of inactivity, the server will time out and shut down with an error status.
 
-### <a name="stub-bolt-server/scripting"></a>Scripting 
+#### Scripting 
 
 Scripts generally consist of alternating client (`C:`) and server (`S:`) messages.
 Each message line contains the message name followed by its fields, in JSON format.
 
-Some messages, such as `INIT` and `RESET`, can be automatically (successfully) consumed if they are not relevant to the current test.
-For this use a script line such as `!: AUTO INIT`.
+Some messages, such as `RESET`, can be automatically (successfully) consumed if they are not relevant to the current test.
+For this use a script line such as `!: AUTO RESET`.
 
 An example:
 ```
-!: AUTO INIT
+!: BOLT 3
+!: AUTO HELLO
 !: AUTO RESET
 
-C: RUN "RETURN {x}" {"x": 1}
+C: RUN "RETURN {x}" {"x": 1} {}
    PULL_ALL
 S: SUCCESS {"fields": ["x"]}
    RECORD [1]
    SUCCESS {}
-```
-
-
-### <a name="stub-bolt-server/command-line-usage"></a>Command Line Usage 
-
-To run a stub server script:
-```
-boltstub 7687 test/scripts/count.bolt
-```
-
-To run a Cypher command against the stub server:
-```
-boltrun "UNWIND range(1, 10) AS n RETURN n"
-```
-
-### <a name="stub-bolt-server/java-test-usage"></a>Java Test Usage 
-
-The stub server can be used from any environment from which command line tools can be executed.
-To use from Java, first construct a wrapper for the server:
-```java
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-
-import static java.lang.Thread.sleep;
-import static java.util.Arrays.asList;
-import static java.util.Collections.singletonList;
-
-public class StubServer
-{
-    // This may be thrown if the driver has not been closed properly
-    public static class ForceKilled extends Exception {}
-
-    private Process process = null;
-
-    private StubServer( String script, int port ) throws IOException, InterruptedException
-    {
-        List<String> command = new ArrayList<>();
-        // This assumes the `boltstub` command is available on the path
-        command.addAll( singletonList( "boltstub" ) );
-        command.addAll( asList( Integer.toString( port ), script ) );
-        ProcessBuilder server = new ProcessBuilder().inheritIO().command( command );
-        process = server.start();
-        sleep( 500 );  // might take a moment for the socket to start listening
-    }
-
-    public static StubServer start( String script, int port ) throws IOException, InterruptedException
-    {
-        return new StubServer( script, port );
-    }
-
-    public int exitStatus() throws InterruptedException, ForceKilled
-    {
-        sleep( 500 );  // wait for a moment to allow disconnection to occur
-        try
-        {
-            return process.exitValue();
-        }
-        catch ( IllegalThreadStateException ex )
-        {
-            // not exited yet
-            process.destroy();
-            process.waitFor();
-            throw new ForceKilled();
-        }
-    }
-
-}
-```
-
-Then, assuming you have a valid script available, create a test to use the stub:
-```java
-@Test
-public void shouldBeAbleRunCypher() throws StubServer.ForceKilled, InterruptedException, IOException
-{
-    // Given
-    StubServer server = StubServer.start( "/path/to/resources/return_x.bolt", 7687 );
-    URI uri = URI.create( "bolt://localhost:7687" );
-    int x;
-
-    // When
-    try ( Driver driver = GraphDatabase.driver( uri ) )
-    {
-        try ( Session session = driver.session() )
-        {
-            Record record = session.run( "RETURN {x}", parameters( "x", 1 ) ).single();
-            x = record.get( 0 ).asInt();
-        }
-    }
-
-    // Then
-    assertThat( x, equalTo( 1 ) );
-
-    // Finally
-    assertThat( server.exitStatus(), equalTo( 0 ) );
-}
-```
-
-## <a name="neo4j-controller"></a>Neo4j Controller 
-
-The Neo4j controller module comprises a set of scripts for downloading, starting, stopping and configuring Neo4j servers.
-These scripts should work for any 3.0+ server version and can pull artifacts from local file system, TeamCity and AWS server (credentials might be required).
-
-Module also contains `neoctrl-cluster` and `neoctrl-multicluster` commands that give ability to install, start and stop Neo4j Causal clusters and Neo4j Multi-clusters.
-Neo4j cluster commands support 3.1+ enterprise Neo4j versions only.
-And Neo4j multi-cluster commands support 3.4+ enterprise Neo4j versions only.
-
-### <a name="neo4j-controller/single-instance"></a>Standalone Server
-
-#### `neoctrl-download` <a name="neo4j-controller/download"></a>
-```
-usage: neoctrl-download [-h] [-e] [-v] version [path]
-
-Download a Neo4j server package for the current platform.
-
-example:
-  neoctrl-download -e 3.1.0-M09 $HOME/servers/
-  neoctrl-download -e 3.3 $HOME/servers/
-
-positional arguments:
-  version           Neo4j server version
-  path              download destination path (default: .)
-
-optional arguments:
-  -h, --help        show this help message and exit
-  -e, --enterprise  select Neo4j Enterprise Edition (default: Community)
-  -v, --verbose     show more detailed output
-
-environment variables:
-  DIST_HOST         name of distribution server (default: dist.neo4j.org)
-  TEAMCITY_HOST     name of build server
-  TEAMCITY_USER     build server user name
-  TEAMCITY_PASSWORD build server password
-  AWS_ACCESS_KEY_ID aws access key id
-  AWS_SECRET_ACCESS_KEY aws secret access key
-  NEOCTRL_LOCAL_PACKAGE local package source is always preferred if configured
-
-
-TEAMCITY_* environment variables are required to download snapshot servers.
-AWS_* environment variables are used to access enterprise distribution servers.
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/install"></a>`neoctrl-install`
-```
-usage: neoctrl-install [-h] [-e] [-v] version [path]
-
-Download and extract a Neo4j server package for the current platform.
-
-example:
-  neoctrl-install -e 3.1.0-M09 $HOME/servers/
-
-positional arguments:
-  version           Neo4j server version
-  path              download destination path (default: .)
-
-optional arguments:
-  -h, --help        show this help message and exit
-  -e, --enterprise  select Neo4j Enterprise Edition (default: Community)
-  -v, --verbose     show more detailed output
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/start"></a>`neoctrl-start`
-```
-usage: neoctrl-start [-h] [-v] [home]
-
-Start an installed Neo4j server instance.
-
-example:
-  neoctrl-start $HOME/servers/neo4j-community-3.0.0
-
-positional arguments:
-  home           Neo4j server directory (default: .)
-
-optional arguments:
-  -h, --help     show this help message and exit
-  -v, --verbose  show more detailed output
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/stop"></a>`neoctrl-stop`
-```
-usage: neoctrl-stop [-h] [-v] [-k] [home]
-
-Stop an installed Neo4j server instance.
-
-example:
-  neoctrl-stop $HOME/servers/neo4j-community-3.0.0
-
-positional arguments:
-  home           Neo4j server directory (default: .)
-
-optional arguments:
-  -h, --help     show this help message and exit
-  -v, --verbose  show more detailed output
-  -k, --kill     forcefully kill the instance
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/create-user"></a>`neoctrl-create-user`
-```
-usage: neoctrl-create-user [-h] [-v] [home] user password
-
-Create a new Neo4j user.
-
-example:
-  neoctrl-create-user $HOME/servers/neo4j-community-3.0.0 bob s3cr3t
-
-positional arguments:
-  home           Neo4j server directory (default: .)
-  user           name of new user
-  password       password for new user
-
-optional arguments:
-  -h, --help     show this help message and exit
-  -v, --verbose  show more detailed output
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/configure"></a>`neoctrl-configure`
-```
-usage: neoctrl-configure [-h] [-v] [home] key=value [key=value ...]
-
-Update Neo4j server configuration.
-
-example:
-  neoctrl-configure . dbms.security.auth_enabled=false
-
-positional arguments:
-  home           Neo4j server directory (default: .)
-  key=value      key/value assignment
-
-optional arguments:
-  -h, --help     show this help message and exit
-  -v, --verbose  show more detailed output
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/set-initial-password"></a>`neoctrl-set-initial-password`
-```
-usage: neoctrl-set-initial-password [-h] password [home]
-
-Sets the initial password of the initial admin user ('neo4j').
-
-example:
-  neoctrl-set-initial-password newPassword $HOME/servers/neo4j-community-3.0.0
-
-positional arguments:
-  password    password for the admin user
-  home        Neo4j server directory (default: .)
-
-optional arguments:
-  -h, --help  show this help message and exit
-
-Report bugs to drivers@neo4j.com
-```
-
-### <a name="neo4j-controller/cluster"></a>Cluster
-```
-usage: neoctrl-cluster [-h] {install,start,stop} ...
-
-Operate Neo4j causal cluster.
-
-optional arguments:
-  -h, --help            show this help message and exit
-
-available sub-commands:
-  start                 Start the causal cluster located at the given path
-  stop                  Stop the causal cluster located at the given path
-  install               Download, extract and configure causal cluster
-
-  {install,start,stop}  commands are available
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/cluster-install"></a>`neoctrl-cluster install`
-```
-usage: neoctrl-cluster install [-h] [-v] [-c CORE_COUNT]
-                               [-r READ_REPLICA_COUNT] [-i INITIAL_PORT]
-                               -p PASSWORD
-                               version [path]
-
-Download, extract and configure causal cluster
-
-example:
-  neoctrl-cluster install [-v] [-c 3] -p init_password 3.1.0 $HOME/cluster/
-
-positional arguments:
-  version               Neo4j server version
-  path                  download destination path (default: .)
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -v, --verbose         show more detailed output
-  -c CORE_COUNT, --cores CORE_COUNT
-                        number of core members in the cluster (default 3)
-  -r READ_REPLICA_COUNT, --read-replicas READ_REPLICA_COUNT
-                        number of read replicas in the cluster (default 0)
-  -i INITIAL_PORT, --initial-port INITIAL_PORT
-                        initial port number for all used ports on all cluster
-                        members. Each next port will simply be an increment of
-                        the previous one (default 20000)
-  -p PASSWORD, --password PASSWORD
-                        initial password of the initial admin user ('neo4j')
-                        for all cluster members (always required)
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/cluster-start"></a>`neoctrl-cluster start`
-```
-usage: neoctrl-cluster start [-h] [-t TIMEOUT] [path]
-
-Start the causal cluster located at the given path
-
-example:
-  neoctrl-cluster start $HOME/cluster/
-
-positional arguments:
-  path                  causal cluster location path (default: .)
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -t TIMEOUT, --timeout TIMEOUT
-                        startup timeout in seconds (default: 120)
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-
-#### <a name="neo4j-controller/cluster-stop"></a>`neoctrl-cluster stop`
-```
-usage: neoctrl-cluster stop [-h] [-k] [path]
-
-Stop the causal cluster located at the given path
-
-example:
-  neoctrl-cluster stop $HOME/cluster/
-
-positional arguments:
-  path        causal cluster location path (default: .)
-
-optional arguments:
-  -h, --help  show this help message and exit
-  -k, --kill  forcefully kill all instances in the cluster
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-
-### <a name="neo4j-controller/multicluster"></a>Multi-Cluster
-```
-usage: neoctrl-multicluster [-h] {install,start,stop} ...
-
-Operate Neo4j multi-cluster.
-
-optional arguments:
-  -h, --help            show this help message and exit
-
-available sub-commands:
-  start                 Start the multi-cluster located at the given path
-  stop                  Stop the multi-cluster located at the given path
-  install               Download, extract and configure multi-cluster
-
-  {install,start,stop}  Commands are available
-
-See neoctrl-download for details of supported environment variables.
-```
-#### <a name="neo4j-controller/multicluster-install"></a>`neoctrl-multicluster install`
-```
-usage: neoctrl-multicluster install [-h] [--path PATH] -p PASSWORD [-v] -d
-                                    DATABASE
-                                    version
-
-Download, install and configure multi-cluster
-
-Example:
-  neoctrl-multicluster install 3.4.0 [--path $HOME/multi-cluster/] -p pAssw0rd [-v] -d '{"london": {"c": 3, "r": 2}, "malmo": {"c": 5, "i": 9001}}'
-
-positional arguments:
-  version               Neo4j server version
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --path PATH           download destination path (default: .)
-  -p PASSWORD, --password PASSWORD
-                        initial password of the initial admin user ('neo4j')
-                        for all cluster members
-  -v, --verbose         show more detailed output
-  -d DATABASE, --database DATABASE
-                        a json string describing the multi-cluster structure
-                        in the form of {database_name: {c:core_size,
-                        r:read_replica_size, i:initial_port},...} defaults:
-                        core_size=3, read_replia_size=0, initial_port=20000
-                        e.g. '{"london": {"c": 3, "r": 2}, "malmo": {"c": 5,
-                        "i": 9001}}'
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-#### <a name="neo4j-controller/multicluster-start"></a>`neoctrl-multicluster start`
-```
-usage: neoctrl-multicluster start [-h] [-v] [-t TIMEOUT] [path]
-
-Start the multi-cluster located at the given path
-
-example:
-  neoctrl-multicluster start [-v] $HOME/cluster/
-
-positional arguments:
-  path                  multi-cluster location path (default: .)
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -v, --verbose         show more detailed output
-  -t TIMEOUT, --timeout TIMEOUT
-                        startup timeout for each cluster inside the
-                        multicluster in seconds (default: 180)
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-#### <a name="neo4j-controller/multicluster-stop"></a>`neoctrl-multicluster stop`
-```
-usage: neoctrl-multicluster stop [-h] [-v] [-k] [path]
-
-Stop the multi-cluster located at the given path
-
-example:
-  neoctrl-multicluster stop [-v] $HOME/cluster/
-
-positional arguments:
-  path           multi-cluster location path (default: .)
-
-optional arguments:
-  -h, --help     show this help message and exit
-  -v, --verbose  show more detailed output
-  -k, --kill     forcefully kill all instances in the multi-cluster. Default:
-                 false
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
 ```
