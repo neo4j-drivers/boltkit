@@ -29,6 +29,8 @@ package_metadata = {
     "name": package,
     "version": version,
     "description": "Toolkit for Neo4j 3.0+ driver authors",
+    "long_description": "Please see https://github.com/neo4j-drivers/boltkit "
+                        "for details.",
     "author": "Neo4j",
     "author_email": "drivers@neo4j.com",
     "entry_points": {
