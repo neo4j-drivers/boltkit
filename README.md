@@ -9,11 +9,11 @@ The library exposes a set of command line tools as well as a full Python API for
 The package can be found on PyPI and can either run globally or within a _virtualenv_.
 Installation makes available a versatile command line tool, called `bolt`.
 
-```bash
+```
 $ pip install boltkit
 ```
 
-```bash
+```
 $ bolt --help
 Usage: bolt [OPTIONS] COMMAND [ARGS]...
 
@@ -37,7 +37,7 @@ Commands:
 The `bolt client` command allows execution of a Cypher query against a Neo4j service.
 
 Synopsis:
-```bash
+```
 $ bolt client --help
 Usage: bolt client [OPTIONS] [CYPHER]...
 
@@ -53,7 +53,7 @@ Options:
 ```
 
 Example:
-```bash 
+```
 $ bolt client "UNWIND range(1, 10) AS n RETURN n"
 ```
 
@@ -78,7 +78,7 @@ TODO
 Run a Neo4j cluster or standalone server in one or more local Docker containers.
 
 Synopsis:
-```bash
+```
 $ bolt server --help
 Usage: bolt server [OPTIONS] [COMMAND]...
 
@@ -133,7 +133,7 @@ The stub Bolt server can be used as a testing resource for client software.
 Scripts can be created against which unit tests can be run without the need for a full Neo4j server.
 
 Synopsis:
-```bash
+```
 $ bolt stub --help
 Usage: bolt stub [OPTIONS] SCRIPT
 
