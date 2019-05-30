@@ -55,7 +55,7 @@ class Neo4jMachine:
         self.docker = DockerClient.from_env(version="auto")
         environment = {}
         if self.auth:
-            environment["NEO4J_AUTH"] = "{}/{}".format(self.auth.user, self.auth.password)
+            environment["NEO4J_AUTH"] = "{}/{}".format(self.auth[0], self.auth[1])
         if "enterprise" in image:
             environment["NEO4J_ACCEPT_LICENSE_AGREEMENT"] = "yes"
         for key, value in config.items():
