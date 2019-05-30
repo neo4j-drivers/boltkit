@@ -22,8 +22,7 @@
 from os import getenv
 import certifi
 import json
-import urllib3
-from urllib3 import make_headers
+from urllib3 import PoolManager, make_headers
 
 import boto3
 
@@ -146,7 +145,7 @@ class Package:
 class Distributor:
 
     def __init__(self):
-        self.http = urllib3.PoolManager(
+        self.http = PoolManager(
             cert_reqs="CERT_REQUIRED",
             ca_certs=certifi.where(),
             headers={"User-Agent": "neo4j-drivers/boltkit"})

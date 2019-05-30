@@ -22,14 +22,22 @@
 from itertools import chain
 from logging import getLogger
 from math import ceil
+from os import getenv
 from threading import Thread
 from uuid import uuid4
+from xml.etree import ElementTree
 
+import certifi
 from docker import DockerClient
 from docker.errors import APIError, ImageNotFound
+from urllib3 import PoolManager, make_headers
 
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
+
+
+TEAMCITY_USER = getenv("TEAMCITY_USER")
+TEAMCITY_PASSWORD = getenv("TEAMCITY_PASSWORD")
 
 
 log = getLogger("boltkit")
@@ -38,6 +46,8 @@ log = getLogger("boltkit")
 class Neo4jMachine:
     """ A single Neo4j server instance, potentially part of a cluster.
     """
+
+    container = None
 
     ip_address = None
 
@@ -131,6 +141,12 @@ class Neo4jService:
     default_bolt_port = 7687
     default_http_port = 7474
 
+    snapshot_host = "live.neo4j-build.io"
+    snapshot_build_config_id = "Neo4j40_Docker"
+    snapshot_build_url = ("https://{}/repository/download/{}/"
+                          "lastSuccessful".format(snapshot_host,
+                                                  snapshot_build_config_id))
+
     def __new__(cls, name=None, n_cores=None, **parameters):
         if n_cores:
             return object.__new__(Neo4jClusterService)
@@ -140,9 +156,16 @@ class Neo4jService:
     def __init__(self, name=None, image=None, auth=None, **parameters):
         self.name = name or uuid4().hex[-7:]
         self.docker = DockerClient.from_env(version="auto")
-        self.image = image or self.default_image
-        if ":" not in self.image:
-            self.image = "neo4j:" + image
+        headers = {}
+        if TEAMCITY_USER and TEAMCITY_PASSWORD:
+            headers.update(make_headers(
+                basic_auth="{}:{}".format(TEAMCITY_USER, TEAMCITY_PASSWORD)))
+        self.http = PoolManager(
+            cert_reqs="CERT_REQUIRED",
+            ca_certs=certifi.where(),
+            headers=headers,
+        )
+        self.image = self._resolve_image(image)
         self.auth = auth or make_auth()
         self.machines = []
         self.routers = []
@@ -166,6 +189,61 @@ class Neo4jService:
                 self.network.remove()
             except APIError:
                 pass
+
+    def _resolve_image(self, image):
+        resolved = image or self.default_image
+        if ":" not in resolved:
+            resolved = "neo4j:" + image
+        if resolved == "neo4j:snapshot":
+            return self._pull_snapshot("community")
+        elif resolved in ("neo4j:snapshot-enterprise",
+                          "neo4j-enterprise:snapshot"):
+            return self._pull_snapshot("enterprise")
+        else:
+            return resolved
+
+    def _resolve_artifact_name(self, edition):
+        log.info("Resolving snapshot artifact name on «{}»".format(
+            self.snapshot_host))
+        prefix = "neo4j-{}".format(edition)
+        url = "{}/teamcity-ivy.xml".format(self.snapshot_build_url)
+        r1 = self.http.request("GET", url)
+        root = ElementTree.fromstring(r1.data)
+        for e in root.find("publications").findall("artifact"):
+            attr = e.attrib
+            if attr["type"] == "tar" and attr["name"].startswith(prefix):
+                return "{}.{}".format(attr["name"], attr["ext"])
+
+    @classmethod
+    def _derive_image_tag(cls, artifact_name):
+        if artifact_name.endswith("-docker-complete.tar"):
+            artifact_name = artifact_name[:-20]
+        else:
+            raise ValueError("Expected artifact name to end with "
+                             "'-docker-complete.tar'")
+        if artifact_name.startswith("neo4j-enterprise-"):
+            return "neo4j-enterprise:{}".format(artifact_name[17:])
+        elif artifact_name.startswith("neo4j-community-"):
+            return "neo4j:{}".format(artifact_name[16:])
+        else:
+            raise ValueError("Expected artifact name to start with either "
+                             "'neo4j-community-' or 'neo4j-enterprise-'")
+
+    def _pull_snapshot(self, edition):
+        artifact = self._resolve_artifact_name(edition)
+        derived = self._derive_image_tag(artifact)
+        try:
+            self.docker.images.get(derived)
+        except ImageNotFound:
+            log.info("Downloading {} from «{}»".format(
+                artifact, self.snapshot_host))
+            url = "{}/{}".format(self.snapshot_build_url, artifact)
+            r2 = self.http.request("GET", url)
+            images = self.docker.images.load(r2.data)
+            image = images[0]
+            return image.tags[0]
+        else:
+            return derived
 
     def _for_each_machine(self, f):
         threads = []
