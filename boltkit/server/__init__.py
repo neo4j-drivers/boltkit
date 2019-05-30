@@ -183,13 +183,6 @@ class Neo4jService:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-    def __del__(self):
-        if self.network:
-            try:
-                self.network.remove()
-            except APIError:
-                pass
-
     def _resolve_image(self, image):
         resolved = image or self.default_image
         if ":" not in resolved:
@@ -277,6 +270,7 @@ class Neo4jService:
     def stop(self):
         log.info("Stopping service %r", self.name)
         self._for_each_machine(lambda machine: machine.stop)
+        self.network.remove()
 
     @property
     def address(self):
