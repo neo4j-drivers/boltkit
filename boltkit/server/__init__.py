@@ -123,8 +123,6 @@ class Neo4jMachine:
     def stop(self):
         log.info("Stopping machine %r", self.fq_name)
         self.container.stop()
-
-    def remove(self):
         self.container.remove(force=True)
 
 
@@ -266,7 +264,6 @@ class Neo4jService:
     def stop(self):
         log.info("Stopping service %r", self.name)
         self._for_each_machine(lambda machine: machine.stop)
-        self._for_each_machine(lambda machine: machine.remove)
         self.network.remove()
 
     @property
