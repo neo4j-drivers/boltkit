@@ -25,6 +25,8 @@ import json
 import urllib3
 from urllib3 import make_headers
 
+import boto3
+
 
 DIST_HOST = "dist.neo4j.org"
 
@@ -230,6 +232,12 @@ class Distributor:
         print("{:<80}".format(progress_string), end="\r\n" if percentage_downloaded == 100 else "\r")
 
     def download(self, edition, version, package_format):
+        try:
+            self.download_public(edition, version, package_format)
+        except ValueError:
+            self.download_from_s3(edition, version, package_format)
+
+    def download_public(self, edition, version, package_format):
         """ Download a public release.
         """
         try:
@@ -243,7 +251,24 @@ class Distributor:
         self._download(download_url, package.name, on_progress=self._print_progress)
 
     def download_from_s3(self, edition, version, package_format):
-        """ TODO """
+        """ Download a release from an S3 bucket.
+        """
+        release = Release(version)
+        package = release.package(edition, package_format)
+        print("Downloading {} from {}".format(package.name, "S3"))
+
+        bucket = "quality.neotechnology.com"
+        key = "internal-release/{}".format(package.name)
+        s3 = boto3.client("s3")
+        f = boto3.resource("s3").Bucket(bucket).Object(key)
+
+        progress = [0]
+
+        def print_progress(b):
+            progress[0] += b
+            self._print_progress(progress[0], f.content_length)
+
+        s3.download_file(bucket, key, package.name, None, print_progress)
 
     def download_from_teamcity(self, edition, version, package_format):
         release = Release(version)

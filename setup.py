@@ -40,7 +40,7 @@ package_metadata = {
     },
     "packages": packages,
     "install_requires": [
-        "boto~=2.48.0",
+        "boto3",
         "certifi",
         "click~=7.0",
         "docker",
