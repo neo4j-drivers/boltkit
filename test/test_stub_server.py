@@ -31,7 +31,7 @@ class ReturnOneTestCase(TestCase):
     def test_v1(self, server):
 
         # Given
-        with Connection.open(*server.address, **server.settings) as cx:
+        with Connection.open(*server.addresses, **server.settings) as cx:
 
             # When
             records = []
@@ -48,7 +48,7 @@ class ReturnOneTestCase(TestCase):
     def test_v2(self, server):
 
         # Given
-        with Connection.open(*server.address, **server.settings) as cx:
+        with Connection.open(*server.addresses, **server.settings) as cx:
 
             # When
             records = []
@@ -65,7 +65,7 @@ class ReturnOneTestCase(TestCase):
     def test_v3(self, server):
 
         # Given
-        with Connection.open(*server.address, **server.settings) as cx:
+        with Connection.open(*server.addresses, **server.settings) as cx:
 
             # When
             records = []
@@ -82,7 +82,7 @@ class ReturnOneTestCase(TestCase):
     def test_v4(self, server):
 
         # Given
-        with Connection.open(*server.address, **server.settings) as cx:
+        with Connection.open(*server.addresses, **server.settings) as cx:
 
             # When
             records = []
@@ -99,7 +99,7 @@ class ReturnOneTestCase(TestCase):
     def test_v4_explicit(self, server):
 
         # Given
-        with Connection.open(*server.address, **server.settings) as cx:
+        with Connection.open(*server.addresses, **server.settings) as cx:
 
             # When
             records = []

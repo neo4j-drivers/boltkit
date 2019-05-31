@@ -60,7 +60,7 @@ class Neo4jMachine:
         self.image = image
         self.bolt_port = bolt_port
         self.http_port = http_port
-        self.address = AddressList([("localhost", self.bolt_port)])
+        self.addresses = AddressList([("localhost", self.bolt_port)])
         self.auth = auth
         self.docker = DockerClient.from_env(version="auto")
         environment = {}
@@ -95,17 +95,17 @@ class Neo4jMachine:
         return hash(self.container)
 
     def __repr__(self):
-        return "%s(fq_name=%r, image=%r, address=%r)" % (self.__class__.__name__, self.fq_name, self.image, self.address)
+        return "%s(fq_name=%r, image=%r, address=%r)" % (self.__class__.__name__, self.fq_name, self.image, self.addresses)
 
     def start(self):
-        log.info("Starting machine %r at «%s»", self.fq_name, self.address)
+        log.info("Starting machine %r at «%s»", self.fq_name, self.addresses)
         self.container.start()
         self.container.reload()
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.service_name]["IPAddress"]
 
     def await_started(self, timeout):
         try:
-            Connection.open(*self.address, auth=self.auth, timeout=timeout).close()
+            Connection.open(*self.addresses, auth=self.auth, timeout=timeout).close()
         except OSError:
             self.container.reload()
             state = self.container.attrs["State"]
@@ -267,8 +267,8 @@ class Neo4jService:
         self.network.remove()
 
     @property
-    def address(self):
-        return AddressList(chain(*(r.address for r in self.routers)))
+    def addresses(self):
+        return AddressList(chain(*(r.addresses for r in self.routers)))
 
     @classmethod
     def find_and_stop(cls, service_name):

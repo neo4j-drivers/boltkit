@@ -29,5 +29,5 @@ class ClientServerTestCase(TestCase):
 
     def test_connect_and_disconnect(self):
         with Neo4jService() as neo4j:
-            with Connection.open(*neo4j.address, auth=neo4j.auth) as cx:
+            with Connection.open(*neo4j.addresses, auth=neo4j.auth) as cx:
                 self.assertEqual(cx.bolt_version, 3)

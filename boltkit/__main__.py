@@ -258,7 +258,7 @@ passed. These are:
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            addr = AddressList(chain(*(r.address for r in neo4j.routers)))
+            addr = AddressList(chain(*(r.addresses for r in neo4j.routers)))
             auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={
