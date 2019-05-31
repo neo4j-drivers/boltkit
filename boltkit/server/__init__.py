@@ -270,6 +270,15 @@ class Neo4jService:
     def address(self):
         return AddressList(chain(*(r.address for r in self.routers)))
 
+    @classmethod
+    def find_and_stop(cls, service_name):
+        docker = DockerClient.from_env(version="auto")
+        for container in docker.containers.list(all=True):
+            if container.name.endswith(".{}".format(service_name)):
+                container.stop()
+                container.remove(force=True)
+        docker.networks.get(service_name).remove()
+
 
 class Neo4jStandaloneService(Neo4jService):
 
