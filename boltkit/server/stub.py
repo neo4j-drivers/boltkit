@@ -204,6 +204,7 @@ class StubServer(Thread):
             log.debug("C: %s", message_repr(v, request))
             log.error("Message mismatch (expected <%s>, "
                       "received <%s>)", expected, message_repr(v, request))
+            self.stop()
             raise SystemExit(EXIT_OFF_SCRIPT)
 
         responses = self.script.match_responses()
@@ -213,6 +214,7 @@ class StubServer(Thread):
                 responses = [Structure(SERVER[v]["SUCCESS"], {"server": server_agents.get(v, "Neo4j/9.99.999")})]
             elif request.tag == CLIENT[v].get("GOODBYE"):
                 log.debug("S: <EXIT>")
+                self.stop()
                 raise SystemExit(EXIT_OK)
             elif request.tag == CLIENT[v]["RUN"]:
                 responses = [Structure(SERVER[v]["SUCCESS"], {"fields": []})]
@@ -225,6 +227,7 @@ class StubServer(Thread):
                 self.send_chunk(sock)
                 log.debug("S: %s", message_repr(v, Structure(response.tag, *response.fields)))
             elif isinstance(response, ExitCommand):
+                self.stop()
                 raise SystemExit(EXIT_OK)
             else:
                 raise RuntimeError("Unknown response type %r" % (response,))
