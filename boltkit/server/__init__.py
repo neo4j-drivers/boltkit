@@ -22,7 +22,7 @@
 from itertools import chain
 from logging import getLogger
 from math import ceil
-from os import getenv
+from os import getenv, path
 from threading import Thread
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -53,7 +53,7 @@ class Neo4jMachine:
 
     ready = 0
 
-    def __init__(self, name, service_name, image, auth, bolt_port, http_port, **config):
+    def __init__(self, name, service_name, image, auth, bolt_port, http_port, volume, env, **config):
         self.name = name
         self.service_name = service_name
         self.fq_name = "{}.{}".format(self.name, self.service_name)
@@ -70,10 +70,19 @@ class Neo4jMachine:
             environment["NEO4J_ACCEPT_LICENSE_AGREEMENT"] = "yes"
         for key, value in config.items():
             environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
+        for s in env:
+            key, value = s.split("=")
+            environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
+
         ports = {
             "7474/tcp": self.http_port,
             "7687/tcp": self.bolt_port,
         }
+
+        volumes = {}
+        for s in volume:
+            source, target = s.split(":")
+            volumes[source] = {'bind': target, 'mode': 'rw'}
 
         def create_container(img):
             return self.docker.containers.create(img,
@@ -82,7 +91,8 @@ class Neo4jMachine:
                                                  hostname=self.fq_name,
                                                  name=self.fq_name,
                                                  network=self.service_name,
-                                                 ports=ports)
+                                                 ports=ports,
+                                                 volumes=volumes)
 
         try:
             self.container = create_container(self.image)
@@ -266,6 +276,9 @@ class Neo4jService:
         self._for_each_machine(lambda machine: machine.stop)
         self.network.remove()
 
+    def exit_gracefully(self, signum, frame):
+        raise KeyboardInterrupt("Stopped gracefully.")
+
     @property
     def addresses(self):
         return AddressList(chain(*(r.addresses for r in self.routers)))
@@ -284,7 +297,7 @@ class Neo4jStandaloneService(Neo4jService):
 
     default_image = "neo4j:latest"
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, volume=None, env=None, **parameters):
         super().__init__(name, **parameters)
         self.machines.append(Neo4jMachine(
             "z",
@@ -293,6 +306,8 @@ class Neo4jStandaloneService(Neo4jService):
             auth=self.auth,
             bolt_port=bolt_port or self.default_bolt_port,
             http_port=http_port or self.default_http_port,
+            volume=volume or {},
+            env=env or {},
         ))
         self.routers.extend(self.machines)
 
@@ -316,7 +331,7 @@ class Neo4jClusterService(Neo4jService):
     def _port_range(cls, base_port, count):
         return range(base_port, base_port + count)
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, volume=None, env=None, **parameters):
         super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
         self.n_cores = n_cores or self.min_cores
         self.n_replicas = n_replicas or self.min_replicas
@@ -324,6 +339,10 @@ class Neo4jClusterService(Neo4jService):
             raise ValueError("A cluster must have been {} and {} cores".format(self.min_cores, self.max_cores))
         if not self.min_replicas <= self.n_replicas <= self.max_replicas:
             raise ValueError("A cluster must have been {} and {} read replicas".format(self.min_replicas, self.max_replicas))
+        if volume is None:
+            volume = {}
+        if env is None:
+            env = {}
 
         # CORES
         # =====
@@ -342,6 +361,8 @@ class Neo4jClusterService(Neo4jService):
             auth=self.auth,
             bolt_port=core_bolt_port_range[i],
             http_port=core_http_port_range[i],
+            volume=["{}:{}".format(path.join(s.split(":")[0], core_names[i]), s.split(":")[1]) for s in volume],
+            env=env,
             **{
                 "causal_clustering.initial_discovery_members": ",".join(core_addresses),
                 "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
@@ -368,6 +389,8 @@ class Neo4jClusterService(Neo4jService):
             auth=self.auth,
             bolt_port=replica_bolt_port_range[i],
             http_port=replica_http_port_range[i],
+            volume=["{}:{}".format(path.join(s.split(":")[0], replica_names[i]), s.split(":")[1]) for s in volume],
+            env=env or {},
             **{
                 "causal_clustering.initial_discovery_members": ",".join(core_addresses),
                 "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),

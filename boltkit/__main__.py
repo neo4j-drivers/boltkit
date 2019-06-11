@@ -24,6 +24,7 @@ from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
 from time import sleep
+import signal
 
 import click
 
@@ -251,6 +252,18 @@ passed. These are:
               help="The number of read replicas to include within the "
                    "cluster. This option will only take effect if -c is also "
                    "used.")
+@click.option("--volume", multiple=True,
+              help="Extra volume settings to Neo4j docker container. "
+                   "Use this to provide data to and/or persist data outside of Neo4j docker container. "
+                   "The input format should be 'host_folder:container_folder'. "
+                   "Both of the folder paths should be absolute paths. "
+                   "When starting a cluster, sub-folders for each cluster are expected. "
+                   "Otherwise new sub-folders will be auto-created inside the given host folder.")
+@click.option("--env", multiple=True,
+              help="Extra environment variables to the neo4j docker container. "
+                   "Use this to pass customized configurations to neo4j. "
+                   "The configuration should be given in the format of 'neo4j_config_key=new_value' "
+                   "When starting a cluster, the configuration will be given to all cluster members.")
 @click.option("-v", "--verbose", count=True, callback=watch_log,
               expose_value=False, is_eager=True,
               help="Show more detail about the startup and shutdown process.")
@@ -260,6 +273,7 @@ def server(command, name, **parameters):
         with Neo4jService(name, **parameters) as neo4j:
             addr = AddressList(chain(*(r.addresses for r in neo4j.routers)))
             auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
+            signal.signal(signal.SIGTERM, neo4j.exit_gracefully)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={
                     "BOLT_SERVER_ADDR": str(addr),
@@ -274,9 +288,8 @@ def server(command, name, **parameters):
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        click.echo(" ".join(map(str, e.args)), err=True)
+        click.echo(" ".join(map(str, e)), err=True)
         exit(1)
-
 
 if __name__ == "__main__":
     bolt()
