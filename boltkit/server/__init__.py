@@ -18,7 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from time import sleep
 from itertools import chain
 from logging import getLogger
 from math import ceil
@@ -45,6 +45,8 @@ neo4j_config = {"dbms.memory.pagecache.size": "50m",
                 "dbms.memory.heap.max_size": "500m",
                 "dbms.transaction.bookmark_ready_timeout": "5s",
                 "dbms.backup.enabled": "false"}
+
+DEFAULT_WAIT_TIMEOUT = 120  # 2 mins
 
 
 class Neo4jMachine:
@@ -121,6 +123,21 @@ class Neo4jMachine:
         self.container.reload()
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.service_name]["IPAddress"]
 
+    def await_stopped(self, timeout):
+        running = True
+        t = 0
+        while running and t < timeout:
+            try:
+                Connection.open(*self.addresses, auth=self.auth, timeout=0).close()
+            except OSError:
+                running = False
+            else:
+                sleep(1)
+                t += 1
+
+        if running:
+            log.error("Machine %r did not become unavailable within %rs" % (self.fq_name, timeout))
+
     def await_started(self, timeout):
         try:
             Connection.open(*self.addresses, auth=self.auth, timeout=timeout).close()
@@ -138,10 +155,18 @@ class Neo4jMachine:
             self.ready = 1
             # log.info("Machine %r available", self.name)
 
+    def stop_remove(self, force=True):
+        log.info("Stopping and removing machine %r", self.fq_name)
+        self.container.stop()
+        self.container.remove(force=force)
+
     def stop(self):
         log.info("Stopping machine %r", self.fq_name)
         self.container.stop()
-        self.container.remove(force=True)
+
+    def restart(self):
+        log.info("Restarting machine %r", self.fq_name)
+        self.container.restart()
 
 
 class Neo4jService:
@@ -181,11 +206,13 @@ class Neo4jService:
         self.auth = auth or make_auth()
         self.machines = []
         self.routers = []
+        self.rr = []
+        self.stopped = {}
         self.network = None
 
     def __enter__(self):
         try:
-            self.start(timeout=120)
+            self.start(timeout=DEFAULT_WAIT_TIMEOUT)
         except KeyboardInterrupt:
             self.stop()
             raise
@@ -267,6 +294,12 @@ class Neo4jService:
         if timeout is not None:
             self.await_started(timeout)
 
+    def stop_instance(self, t, timeout=None):
+        pass
+
+    def start_all(self, timeout=None):
+        pass
+
     def await_started(self, timeout):
 
         def wait(machine):
@@ -281,7 +314,7 @@ class Neo4jService:
 
     def stop(self):
         log.info("Stopping service %r", self.name)
-        self._for_each_machine(lambda machine: machine.stop)
+        self._for_each_machine(lambda machine: machine.stop_remove)
         self.network.remove()
 
     def exit_gracefully(self, signum, frame):
@@ -364,7 +397,7 @@ class Neo4jClusterService(Neo4jService):
         core_names = [chr(i) for i in range(97, 97 + self.n_cores)]
         core_addresses = ["{}.{}:5000".format(name, self.name) for name in core_names]
         #
-        self.machines.extend(Neo4jMachine(
+        self.routers.extend(Neo4jMachine(
             core_names[i],
             self.name,
             self.image,
@@ -381,7 +414,7 @@ class Neo4jClusterService(Neo4jService):
                 "dbms.mode": "CORE",
             }
         ) for i in range(self.n_cores or 0))
-        self.routers.extend(self.machines)
+        self.machines.extend(self.routers)
 
         # REPLICAS
         # ========
@@ -392,7 +425,7 @@ class Neo4jClusterService(Neo4jService):
         # Calculate machine names
         replica_names = [chr(i) for i in range(48, 48 + self.n_replicas)]
         #
-        self.machines.extend(Neo4jMachine(
+        self.rr.extend(Neo4jMachine(
             replica_names[i],
             self.name,
             self.image,
@@ -407,3 +440,25 @@ class Neo4jClusterService(Neo4jService):
                 "dbms.mode": "READ_REPLICA",
             }
         ) for i in range(self.n_replicas or 0))
+        self.machines.extend(self.rr)
+
+    def stop_instance(self, input, timeout=None):
+        if 'core' in input:
+            machine = self.routers.pop(1)
+        else:  # type = 'rr'
+            machine = self.rr.pop(1)
+        machine.stop()
+        self.stopped[machine.fq_name] = machine
+
+        # wait for instance to be stopped
+        if timeout is not None:
+            machine.await_stopped(timeout=timeout)
+
+    def start_all(self, timeout=None):
+        for fq_name, machine in self.stopped.items():
+            machine.restart()
+        self.stopped = {}
+
+        # wait for all to be started
+        if timeout is not None:
+            self.await_started(timeout)
