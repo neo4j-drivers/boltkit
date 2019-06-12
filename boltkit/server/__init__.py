@@ -35,12 +35,16 @@ from urllib3 import PoolManager, make_headers
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
 
-
 TEAMCITY_USER = getenv("TEAMCITY_USER")
 TEAMCITY_PASSWORD = getenv("TEAMCITY_PASSWORD")
 
-
 log = getLogger("boltkit")
+
+neo4j_config = {"dbms.memory.pagecache.size": "50m",
+                "dbms.memory.heap.initial_size": "300m",
+                "dbms.memory.heap.max_size": "500m",
+                "dbms.transaction.bookmark_ready_timeout": "5s",
+                "dbms.backup.enabled": "false"}
 
 
 class Neo4jMachine:
@@ -68,6 +72,9 @@ class Neo4jMachine:
             environment["NEO4J_AUTH"] = "{}/{}".format(self.auth[0], self.auth[1])
         if "enterprise" in image:
             environment["NEO4J_ACCEPT_LICENSE_AGREEMENT"] = "yes"
+
+        for key, value in neo4j_config.items():
+            environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
         for key, value in config.items():
             environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
         for s in env:
@@ -105,7 +112,8 @@ class Neo4jMachine:
         return hash(self.container)
 
     def __repr__(self):
-        return "%s(fq_name=%r, image=%r, address=%r)" % (self.__class__.__name__, self.fq_name, self.image, self.addresses)
+        return "%s(fq_name=%r, image=%r, address=%r)" % (
+        self.__class__.__name__, self.fq_name, self.image, self.addresses)
 
     def start(self):
         log.info("Starting machine %r at «%s»", self.fq_name, self.addresses)
@@ -177,7 +185,7 @@ class Neo4jService:
 
     def __enter__(self):
         try:
-            self.start(timeout=300)
+            self.start(timeout=120)
         except KeyboardInterrupt:
             self.stop()
             raise
@@ -294,7 +302,6 @@ class Neo4jService:
 
 
 class Neo4jStandaloneService(Neo4jService):
-
     default_image = "neo4j:latest"
 
     def __init__(self, name=None, bolt_port=None, http_port=None, volume=None, env=None, **parameters):
@@ -313,7 +320,6 @@ class Neo4jStandaloneService(Neo4jService):
 
 
 class Neo4jClusterService(Neo4jService):
-
     default_image = "neo4j:enterprise"
 
     # The minimum and maximum number of cores permitted
@@ -331,14 +337,18 @@ class Neo4jClusterService(Neo4jService):
     def _port_range(cls, base_port, count):
         return range(base_port, base_port + count)
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, volume=None, env=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, volume=None, env=None,
+                 **parameters):
         super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
+        if not "enterprise" in self.image:
+            raise ValueError("Enterprise neo4j docker image is required for cluster")
         self.n_cores = n_cores or self.min_cores
         self.n_replicas = n_replicas or self.min_replicas
         if not self.min_cores <= self.n_cores <= self.max_cores:
             raise ValueError("A cluster must have been {} and {} cores".format(self.min_cores, self.max_cores))
         if not self.min_replicas <= self.n_replicas <= self.max_replicas:
-            raise ValueError("A cluster must have been {} and {} read replicas".format(self.min_replicas, self.max_replicas))
+            raise ValueError(
+                "A cluster must have been {} and {} read replicas".format(self.min_replicas, self.max_replicas))
         if volume is None:
             volume = {}
         if env is None:
@@ -366,7 +376,7 @@ class Neo4jClusterService(Neo4jService):
             **{
                 "causal_clustering.initial_discovery_members": ",".join(core_addresses),
                 "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
-                "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
+                # "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
                 "dbms.connector.bolt.advertised_address": "localhost:{}".format(core_bolt_port_range[i]),
                 "dbms.mode": "CORE",
             }
@@ -390,7 +400,7 @@ class Neo4jClusterService(Neo4jService):
             bolt_port=replica_bolt_port_range[i],
             http_port=replica_http_port_range[i],
             volume=["{}:{}".format(path.join(s.split(":")[0], replica_names[i]), s.split(":")[1]) for s in volume],
-            env=env or {},
+            env=env,
             **{
                 "causal_clustering.initial_discovery_members": ",".join(core_addresses),
                 "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),
