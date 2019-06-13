@@ -205,8 +205,8 @@ class Neo4jService:
         self.image = self._resolve_image(image)
         self.auth = auth or make_auth()
         self.machines = []
-        self.routers = []
-        self.rr = []
+        self.routers = {}
+        self.rr = {}
         self.stopped = {}
         self.network = None
 
@@ -294,7 +294,10 @@ class Neo4jService:
         if timeout is not None:
             self.await_started(timeout)
 
-    def stop_instance(self, t, timeout=None):
+    def stop_instance(self, value, timeout=None):
+        pass
+
+    def start_instance(self, value, timeout=None):
         pass
 
     def start_all(self, timeout=None):
@@ -322,7 +325,7 @@ class Neo4jService:
 
     @property
     def addresses(self):
-        return AddressList(chain(*(r.addresses for r in self.routers)))
+        return AddressList(chain(*(r.addresses for r in self.routers.values())))
 
     @classmethod
     def find_and_stop(cls, service_name):
@@ -339,7 +342,7 @@ class Neo4jStandaloneService(Neo4jService):
 
     def __init__(self, name=None, bolt_port=None, http_port=None, volume=None, env=None, **parameters):
         super().__init__(name, **parameters)
-        self.machines.append(Neo4jMachine(
+        machine = Neo4jMachine(
             "z",
             self.name,
             self.image,
@@ -348,8 +351,9 @@ class Neo4jStandaloneService(Neo4jService):
             http_port=http_port or self.default_http_port,
             volume=volume or {},
             env=env or {},
-        ))
-        self.routers.extend(self.machines)
+        )
+        self.routers[machine.fq_name] = machine
+        self.machines.append(machine)
 
 
 class Neo4jClusterService(Neo4jService):
@@ -397,24 +401,26 @@ class Neo4jClusterService(Neo4jService):
         core_names = [chr(i) for i in range(97, 97 + self.n_cores)]
         core_addresses = ["{}.{}:5000".format(name, self.name) for name in core_names]
         #
-        self.routers.extend(Neo4jMachine(
-            core_names[i],
-            self.name,
-            self.image,
-            auth=self.auth,
-            bolt_port=core_bolt_port_range[i],
-            http_port=core_http_port_range[i],
-            volume=["{}:{}".format(path.join(s.split(":")[0], core_names[i]), s.split(":")[1]) for s in volume],
-            env=env,
-            **{
-                "causal_clustering.initial_discovery_members": ",".join(core_addresses),
-                "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
-                # "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
-                "dbms.connector.bolt.advertised_address": "localhost:{}".format(core_bolt_port_range[i]),
-                "dbms.mode": "CORE",
-            }
-        ) for i in range(self.n_cores or 0))
-        self.machines.extend(self.routers)
+        for i in range(self.n_cores or 0):
+            machine = Neo4jMachine(
+                core_names[i],
+                self.name,
+                self.image,
+                auth=self.auth,
+                bolt_port=core_bolt_port_range[i],
+                http_port=core_http_port_range[i],
+                volume=["{}:{}".format(path.join(s.split(":")[0], core_names[i]), s.split(":")[1]) for s in volume],
+                env=env,
+                **{
+                    "causal_clustering.initial_discovery_members": ",".join(core_addresses),
+                    "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
+                    # "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
+                    "dbms.connector.bolt.advertised_address": "localhost:{}".format(core_bolt_port_range[i]),
+                    "dbms.mode": "CORE",
+                }
+            )
+            self.routers[machine.fq_name] = machine
+        self.machines.extend(self.routers.values())
 
         # REPLICAS
         # ========
@@ -425,34 +431,58 @@ class Neo4jClusterService(Neo4jService):
         # Calculate machine names
         replica_names = [chr(i) for i in range(48, 48 + self.n_replicas)]
         #
-        self.rr.extend(Neo4jMachine(
-            replica_names[i],
-            self.name,
-            self.image,
-            auth=self.auth,
-            bolt_port=replica_bolt_port_range[i],
-            http_port=replica_http_port_range[i],
-            volume=["{}:{}".format(path.join(s.split(":")[0], replica_names[i]), s.split(":")[1]) for s in volume],
-            env=env,
-            **{
-                "causal_clustering.initial_discovery_members": ",".join(core_addresses),
-                "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),
-                "dbms.mode": "READ_REPLICA",
-            }
-        ) for i in range(self.n_replicas or 0))
-        self.machines.extend(self.rr)
+        for i in range(self.n_replicas or 0):
+            machine = Neo4jMachine(
+                replica_names[i],
+                self.name,
+                self.image,
+                auth=self.auth,
+                bolt_port=replica_bolt_port_range[i],
+                http_port=replica_http_port_range[i],
+                volume=["{}:{}".format(path.join(s.split(":")[0], replica_names[i]), s.split(":")[1]) for s in volume],
+                env=env,
+                **{
+                    "causal_clustering.initial_discovery_members": ",".join(core_addresses),
+                    "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),
+                    "dbms.mode": "READ_REPLICA",
+                }
+            )
+            self.rr[machine.fq_name] = machine
+        self.machines.extend(self.rr.values())
 
-    def stop_instance(self, input, timeout=None):
-        if 'core' in input:
-            machine = self.routers.pop(1)
-        else:  # type = 'rr'
-            machine = self.rr.pop(1)
+    def stop_instance(self, value, timeout=None):
+        name = value.split()[1]
+
+        if name in self.routers:
+            machine = self.routers[name]
+        elif name in self.rr:
+            machine = self.rr[name]
+        else:
+            raise ValueError("Failed to find an instance named {}".format(name))
+
         machine.stop()
         self.stopped[machine.fq_name] = machine
 
         # wait for instance to be stopped
         if timeout is not None:
             machine.await_stopped(timeout=timeout)
+
+    def start_instance(self, value, timeout=None):
+        name = value.split()[1]
+
+        if name in self.routers:
+            machine = self.routers[name]
+        elif name in self.rr:
+            machine = self.rr[name]
+        else:
+            raise ValueError("Failed to find an instance named {}".format(name))
+
+        machine.restart()
+        self.stopped.pop(name, None)
+
+        # wait for instance to be started
+        if timeout is not None:
+            machine.await_started(timeout=timeout)
 
     def start_all(self, timeout=None):
         for fq_name, machine in self.stopped.items():

@@ -211,8 +211,10 @@ def handle_input(value, neo4j):
         raise KeyboardInterrupt("exiting normally.")
     elif value.startswith('stop'):
         neo4j.stop_instance(value, timeout=DEFAULT_WAIT_TIMEOUT)
-    elif value.startswith('start'):
+    elif value.startswith('start all'):
         neo4j.start_all(timeout=DEFAULT_WAIT_TIMEOUT)
+    elif value.startswith('start'):
+        neo4j.start_instance(value, timeout=DEFAULT_WAIT_TIMEOUT)
 
 
 @bolt.command(context_settings={"ignore_unknown_options": True}, help="""\
@@ -279,7 +281,7 @@ passed. These are:
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            addr = " ".join(list("{}={}".format(r.fq_name, r.addresses) for r in neo4j.routers))
+            addr = " ".join(list("{}={}".format(r.fq_name, r.addresses) for r in neo4j.machines))
             auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
             signal.signal(signal.SIGTERM, neo4j.exit_gracefully)
             if command:
