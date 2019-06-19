@@ -268,9 +268,10 @@ def server(command, name, **parameters):
             else:
                 click.echo("BOLT_SERVER_ADDR='{}'".format(addr))
                 click.echo("NEO4J_AUTH='{}'".format(auth))
-                click.echo("Press Ctrl+C to exit")
-                while True:
-                    sleep(0.1)
+                neo4j.console(
+                    read=lambda t: click.prompt(t, prompt_suffix="> "),
+                    write=click.echo,
+                )
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
