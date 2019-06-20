@@ -147,9 +147,12 @@ class Neo4jMachine:
         self.container.reload()
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.spec.service_name]["IPAddress"]
 
+    def ping(self, timeout):
+        Connection.open(*self.addresses, auth=self.auth, timeout=timeout).close()
+
     def await_started(self, timeout):
         try:
-            Connection.open(*self.addresses, auth=self.auth, timeout=timeout).close()
+            self.ping(timeout)
         except OSError:
             self.container.reload()
             state = self.container.attrs["State"]
@@ -187,7 +190,7 @@ class Neo4jService:
 
     console_read = None
     console_write = None
-    console_line = None
+    console_args = None
     console_index = None
 
     def __new__(cls, name=None, n_cores=None, **parameters):
@@ -335,7 +338,10 @@ class Neo4jService:
     def _update_console_index(self):
         self.console_index.update({
             "exit": self.console_exit,
+            "help": self.console_help,
+            "logs": self.console_logs,
             "ls": self.console_list,
+            "ping": self.console_ping,
         })
 
     def console(self, read, write):
@@ -343,20 +349,70 @@ class Neo4jService:
         self.console_write = write
         self._update_console_index()
         while True:
-            self.console_line = shlex_split(self.console_read(self.name))
+            self.console_args = shlex_split(self.console_read(self.name))
             try:
-                f = self.console_index[self.console_line[0]]
+                f = self.console_index[self.console_args[0]]
             except KeyError:
                 self.console_write("ERROR!")
             else:
                 f()
 
     def console_exit(self):
+        """ Shutdown and exit
+        """
         raise SystemExit()
 
+    def console_help(self):
+        """ Display help
+        """
+        width = max(map(len, self.console_index))
+        template = "{:<%d}   {}" % width
+        for command, f in sorted(self.console_index.items()):
+            self.console_write(template.format(command, f.__doc__.strip()))
+
     def console_list(self):
+        """ List active servers
+        """
+        self.console_write("NAME        BOLT PORT   HTTP PORT   "
+                           "MODE           CONTAINER")
         for spec, machine in self.machines.items():
-            self.console_write(spec.name)
+            self.console_write("{:<12}{:<12}{:<12}{:<15}{}".format(
+                spec.fq_name,
+                spec.bolt_port,
+                spec.http_port,
+                spec.config.get("dbms.mode", "SINGLE"),
+                machine.container.short_id,
+            ))
+
+    def console_ping(self):
+        """ Ping server
+        """
+        try:
+            name = self.console_args[1]
+        except IndexError:
+            name = "a"
+        found = 0
+        for spec, machine in list(self.machines.items()):
+            if name in (spec.name, spec.fq_name):
+                machine.ping(timeout=0)
+                found += 1
+        if not found:
+            self.console_write("Machine {} not found".format(name))
+
+    def console_logs(self):
+        """ Display server logs
+        """
+        try:
+            name = self.console_args[1]
+        except IndexError:
+            name = "a"
+        found = 0
+        for spec, machine in list(self.machines.items()):
+            if name in (spec.name, spec.fq_name):
+                self.console_write(machine.container.logs())
+                found += 1
+        if not found:
+            self.console_write("Machine {} not found".format(name))
 
 
 class Neo4jStandaloneService(Neo4jService):
@@ -366,7 +422,7 @@ class Neo4jStandaloneService(Neo4jService):
     def __init__(self, name=None, bolt_port=None, http_port=None, **parameters):
         super().__init__(name, **parameters)
         spec = Neo4jMachineSpec(
-            "z",
+            "a",
             self.name,
             bolt_port=bolt_port or self.default_bolt_port,
             http_port=http_port or self.default_http_port,
@@ -424,7 +480,7 @@ class Neo4jClusterService(Neo4jService):
         replica_bolt_port_range = self._port_range(ceil(core_bolt_port_range.stop / 10) * 10, self.max_replicas)
         replica_http_port_range = self._port_range(ceil(core_http_port_range.stop / 10) * 10, self.max_replicas)
         self.free_replica_machine_specs = [
-            Neo4jCoreMachineSpec(
+            Neo4jReplicaMachineSpec(
                 chr(48 + i),
                 self.name,
                 replica_bolt_port_range[i],
@@ -454,17 +510,6 @@ class Neo4jClusterService(Neo4jService):
                 })
                 self.machines[spec] = Neo4jMachine(spec, self.image, self.auth)
 
-    def add_core(self):
-        if len(self.cores) < self.max_cores:
-            spec = self.free_core_machine_specs.pop(0)
-            self.machines[spec] = None
-            self._boot_machines()
-            self.machines[spec].start()
-            self.machines[spec].await_started(300)
-        else:
-            raise RuntimeError("A maximum of {} cores "
-                               "is permitted".format(self.max_cores))
-
     @property
     def cores(self):
         return [machine for spec, machine in self.machines.items()
@@ -482,11 +527,52 @@ class Neo4jClusterService(Neo4jService):
     def _update_console_index(self):
         super()._update_console_index()
         self.console_index.update({
-            "add": self.console_add,
+            "add-core": self.console_add_core,
+            "add-replica": self.console_add_replica,
+            "rm": self.console_remove,
         })
 
-    def console_add(self):
-        if self.console_line[1] == "core":
-            self.add_core()
+    def console_add_core(self):
+        """ Add new core server
+        """
+        if len(self.cores) < self.max_cores:
+            spec = self.free_core_machine_specs.pop(0)
+            self.machines[spec] = None
+            self._boot_machines()
+            self.machines[spec].start()
+            self.machines[spec].await_started(300)
+            self.console_write("Added core server %r" % spec.fq_name)
         else:
-            raise ValueError("usage: add core|replica")
+            self.console_write("A maximum of {} cores "
+                               "is permitted".format(self.max_cores))
+
+    def console_add_replica(self):
+        """ Add new replica server
+        """
+        if len(self.replicas) < self.max_replicas:
+            spec = self.free_replica_machine_specs.pop(0)
+            self.machines[spec] = None
+            self._boot_machines()
+            self.machines[spec].start()
+            self.machines[spec].await_started(300)
+            self.console_write("Added replica server %r" % spec.fq_name)
+        else:
+            self.console_write("A maximum of {} replicas "
+                               "is permitted".format(self.max_replicas))
+
+    def console_remove(self):
+        """ Remove server by name
+        """
+        name = self.console_args[1]
+        found = 0
+        for spec, machine in list(self.machines.items()):
+            if name in (spec.name, spec.fq_name):
+                del self.machines[spec]
+                machine.stop()
+                if isinstance(spec, Neo4jCoreMachineSpec):
+                    self.free_core_machine_specs.append(spec)
+                elif isinstance(spec, Neo4jReplicaMachineSpec):
+                    self.free_replica_machine_specs.append(spec)
+                found += 1
+        if not found:
+            self.console_write("Machine {} not found".format(name))
