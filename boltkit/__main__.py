@@ -269,6 +269,8 @@ passed. These are:
                    "Both of the folder paths should be absolute paths. "
                    "When starting a cluster, sub-folders for each cluster are expected. "
                    "Otherwise new sub-folders will be auto-created inside the given host folder.")
+@click.option("--user", type=int,
+              help="Specify the user to run Neo4j docker container.")
 @click.option("--env", multiple=True,
               help="Extra environment variables to the neo4j docker container. "
                    "Use this to pass customized configurations to neo4j. "

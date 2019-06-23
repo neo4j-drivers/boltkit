@@ -22,7 +22,7 @@ from time import sleep
 from itertools import chain
 from logging import getLogger
 from math import ceil
-from os import getenv, path
+from os import getenv, path, makedirs
 from threading import Thread
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -44,7 +44,9 @@ neo4j_config = {"dbms.memory.pagecache.size": "50m",
                 "dbms.memory.heap.initial_size": "300m",
                 "dbms.memory.heap.max_size": "500m",
                 "dbms.transaction.bookmark_ready_timeout": "5s",
-                "dbms.backup.enabled": "false"}
+                "dbms.backup.enabled": "false",
+                "dbms.connectors.default_listen_address": "::",
+                }
 
 DEFAULT_WAIT_TIMEOUT = 120  # 2 mins
 
@@ -59,7 +61,7 @@ class Neo4jMachine:
 
     ready = 0
 
-    def __init__(self, name, service_name, image, auth, bolt_port, http_port, volume, env, **config):
+    def __init__(self, name, service_name, image, auth, bolt_port, http_port, volume, env, user, **config):
         self.name = name
         self.service_name = service_name
         self.fq_name = "{}.{}".format(self.name, self.service_name)
@@ -91,6 +93,8 @@ class Neo4jMachine:
         volumes = {}
         for s in volume:
             source, target = s.split(":")
+            # ensure host directory already exists before starting docker
+            makedirs(source, exist_ok=True)
             volumes[source] = {'bind': target, 'mode': 'rw'}
 
         def create_container(img):
@@ -101,7 +105,8 @@ class Neo4jMachine:
                                                  name=self.fq_name,
                                                  network=self.service_name,
                                                  ports=ports,
-                                                 volumes=volumes)
+                                                 volumes=volumes,
+                                                 user=user)
 
         try:
             self.container = create_container(self.image)
@@ -340,7 +345,7 @@ class Neo4jService:
 class Neo4jStandaloneService(Neo4jService):
     default_image = "neo4j:latest"
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, volume=None, env=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, volume=None, env=None, user=None, **parameters):
         super().__init__(name, **parameters)
         machine = Neo4jMachine(
             "z",
@@ -351,6 +356,7 @@ class Neo4jStandaloneService(Neo4jService):
             http_port=http_port or self.default_http_port,
             volume=volume or {},
             env=env or {},
+            user=user,
         )
         self.routers[machine.fq_name] = machine
         self.machines.append(machine)
@@ -375,7 +381,7 @@ class Neo4jClusterService(Neo4jService):
         return range(base_port, base_port + count)
 
     def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, volume=None, env=None,
-                 **parameters):
+                 user=None, **parameters):
         super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
         if not "enterprise" in self.image:
             raise ValueError("Enterprise neo4j docker image is required for cluster")
@@ -411,6 +417,7 @@ class Neo4jClusterService(Neo4jService):
                 http_port=core_http_port_range[i],
                 volume=["{}:{}".format(path.join(s.split(":")[0], core_names[i]), s.split(":")[1]) for s in volume],
                 env=env,
+                user=user,
                 **{
                     "causal_clustering.initial_discovery_members": ",".join(core_addresses),
                     "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
@@ -441,6 +448,7 @@ class Neo4jClusterService(Neo4jService):
                 http_port=replica_http_port_range[i],
                 volume=["{}:{}".format(path.join(s.split(":")[0], replica_names[i]), s.split(":")[1]) for s in volume],
                 env=env,
+                user=user,
                 **{
                     "causal_clustering.initial_discovery_members": ",".join(core_addresses),
                     "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),
