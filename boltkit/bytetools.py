@@ -18,23 +18,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from sys import argv
 
-from .driver import Connection
-from .watcher import watch
+def h(data):
+    """ A small helper function to translate byte data into a human-readable hexadecimal
+    representation. Each byte in the input data is converted into a two-character hexadecimal
+    string and is joined to its neighbours with a colon character.
 
+    This function is not essential to driver-building but is a great help when debugging,
+    logging and writing doctests.
 
-def run():
-    watch("boltkit.connection")
-    with Connection.open(("localhost", 7687), auth=("neo4j", "password")) as cx:
-        records = []
-        cx.run(argv[1], {})
-        cx.pull(-1, -1, records)
-        cx.send_all()
-        cx.fetch_all()
-        for record in records:
-            print("\t".join(map(str, record)))
+        >>> from boltkit.bytetools import h
+        >>> h(b"\x03A~")
+        '03:41:7E'
 
+    Args:
+        data: Input byte data as `bytes` or a `bytearray`.
 
-if __name__ == "__main__":
-    run()
+    Returns:
+        A textual representation of the input data.
+    """
+    return ":".join("{:02X}".format(b) for b in bytearray(data))

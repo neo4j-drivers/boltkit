@@ -32,30 +32,46 @@ except ImportError:
     JSONDecodeError = ValueError
 from logging import getLogger
 from select import select
-from socket import socket, SOL_SOCKET, SO_REUSEADDR, error as socket_error, SHUT_RDWR
+from socket import socket, SOL_SOCKET, SO_REUSEADDR, SHUT_RDWR
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
 
-from .driver import h, UINT_16, INT_32, CLIENT, SERVER, packed, unpacked, BOLT, BOLT_VERSIONS as server_known_versions
+from .addressing import Address
+from .bytetools import h
+from .driver import CLIENT, SERVER, BOLT, MAX_BOLT_VERSION
+from .packstream import UINT_16, INT_32, Structure, pack, unpack
 from .watcher import watch
 
 TIMEOUT = 30
 
+EXIT_OK = 0
+EXIT_OFF_SCRIPT = 1
+EXIT_TIMEOUT = 2
+EXIT_UNKNOWN = 99
+
 
 log = getLogger("boltkit.server")
 
+server_agents = {
+    1: "Neo4j/3.0.0",
+    2: "Neo4j/3.4.0",
+    3: "Neo4j/3.5.0",
+    4: "Neo4j/4.0.0",
+}
 
-def message_repr(v, tag, *data):
-    name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == tag)
-    return "%s %s" % (name, " ".join(map(json_dumps, data)))
+
+def message_repr(v, message):
+    name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == message.tag)
+    return "%s %s" % (name, " ".join(map(json_dumps, message.fields)))
 
 
 class Peer(object):
 
-    def __init__(self, address):
-        self.address = address
-        self.version = 0
+    def __init__(self, socket, address):
+        self.socket = socket
+        self.address = Address(address)
+        self.bolt_version = 0
 
 
 class Item(object):
@@ -70,9 +86,6 @@ class Line(Item):
         self.peer = peer
         self.message = message
 
-    def __repr__(self):
-        return "%s: %s" % (self.peer, message_repr(self.protocol_version, *self.message))
-
 
 class ExitCommand(Item):
 
@@ -82,7 +95,7 @@ class ExitCommand(Item):
 class Script(object):
 
     def __init__(self, file_name=None):
-        self.protocol_version = 1
+        self.bolt_version = 1
         self.auto = []
         self.lines = deque()
         if file_name:
@@ -99,24 +112,25 @@ class Script(object):
 
     def parse_message(self, message):
         tag, _, data = message.partition(" ")
-        v = self.protocol_version
+        v = self.bolt_version
         if tag in CLIENT[v]:
-            parsed = (CLIENT[v][tag],)
+            parsed_tag = CLIENT[v][tag]
         elif tag in SERVER[v]:
-            parsed = (SERVER[v][tag],)
+            parsed_tag = SERVER[v][tag]
         else:
             raise ValueError("Unknown message type %s" % tag)
         decoder = JSONDecoder()
+        parsed = []
         while data:
             data = data.lstrip()
             try:
                 decoded, end = decoder.raw_decode(data)
-            except JSONDecodeError:
+            except ValueError:
                 break
             else:
-                parsed += (decoded,)
+                parsed.append(decoded)
                 data = data[end:]
-        return parsed
+        return Structure(parsed_tag, *parsed)
 
     def parse_command(self, message):
         tag, _, data = message.partition(" ")
@@ -146,19 +160,19 @@ class Script(object):
                     if command == "AUTO":
                         self.auto.append(self.parse_message(rest))
                     if command == "BOLT":
-                        self.protocol_version = int(rest)
-                        if self.protocol_version not in server_known_versions:
+                        self.bolt_version = int(rest)
+                        if self.bolt_version < 0 or self.bolt_version > MAX_BOLT_VERSION or CLIENT[self.bolt_version] is None:
                             raise RuntimeError("Protocol version %r in script %r is not available "
-                                               "in this version of BoltKit" % (self.protocol_version, file_name))
+                                               "in this version of BoltKit" % (self.bolt_version, file_name))
                 elif mode in "CS":
                     if line.startswith("<"):
-                        lines.append(Line(self.protocol_version, line_no, mode, self.parse_command(line)))
+                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_command(line)))
                     else:
-                        lines.append(Line(self.protocol_version, line_no, mode, self.parse_message(line)))
+                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_message(line)))
 
     def match_auto_request(self, request):
         for message in self.auto:
-            if len(message) == 1 and request[0] == message[0]:
+            if request.tag == message.tag:
                 return True
             elif request == message:
                 return True
@@ -205,43 +219,52 @@ class StubServer(Thread):
         self.server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.server.bind(self.address)
         self.server.listen(0)
+        log.info("Listening for incoming connections on «%s»", self.address)
         self.peers = {}
         if script_name:
             self.script = Script(script_name)
         self.running = True
-        self.timeout = timeout or TIMEOUT
-
-    def __del__(self):
-        self.stop()
+        self.timeout = timeout
+        self.exit_code = 0
 
     def run(self):
-        self.peers[self.server] = Peer(self.address)
+        self.peers[self.server] = Peer(self.server, self.address)
         while self.running:
-            read_list, _, _ = select(list(self.peers), [], [], self.timeout)
-            if read_list:
-                for sock in read_list:
-                    self.read(sock)
-            else:
-                log.error("C: <TIMEOUT> %ds", self.timeout)
-                exit(1)
+            try:
+                read_list, _, _ = select(list(self.peers), [], [], self.timeout)
+                if read_list:
+                    for sock in read_list:
+                        self.read(sock)
+                else:
+                    log.error("Timed out after waiting %rs for an incoming "
+                              "connection", self.timeout)
+                    raise SystemExit(EXIT_TIMEOUT)
+            except SystemExit as e:
+                self.exit_code = e.args[0]
+                self.running = False
+            except:
+                self.exit_code = EXIT_UNKNOWN
+                self.running = False
+        self.stop()
+        log.info("Exiting with code %r", self.exit_code)
 
     def stop(self):
         if not self.peers:
             return
         peers, self.peers, self.running = list(self.peers.items()), {}, False
         for sock, peer in peers:
-            log.info("~~ <CLOSE> \"%s\" %d", *peer.address)
+            log.debug("~~ <CLOSE> \"%s\" %d", *peer.address)
             try:
                 sock.shutdown(SHUT_RDWR)
                 sock.close()
-            except socket_error:
+            except OSError:
                 pass
 
     def read(self, sock):
         try:
             if sock == self.server:
                 self.accept(sock)
-            elif self.peers[sock].version:
+            elif self.peers[sock].bolt_version:
                 self.handle_request(sock)
             else:
                 self.handshake(sock)
@@ -251,15 +274,15 @@ class StubServer(Thread):
 
     def accept(self, sock):
         new_sock, address = sock.accept()
-        self.peers[new_sock] = Peer(address)
-        listen_address = self.peers[sock].address
+        self.peers[new_sock] = Peer(new_sock, address)
+        # listen_address = self.peers[sock].address
         serve_address = self.peers[new_sock].address
-        log.info("~~ <ACCEPT> \"%s\" %d -> %d", listen_address[0], listen_address[1], serve_address[1])
+        log.info("Accepted incoming connection from «%s»", serve_address)
 
     def handshake(self, sock):
         data = sock.recv(4)
         if data == BOLT:
-            log.info("C: <BOLT>")
+            log.debug("C: <BOLT>")
         else:
             if data:
                 log.error("C: <#?@!>")
@@ -271,20 +294,20 @@ class StubServer(Thread):
         suggested_version_3, = raw_unpack(INT_32, raw_data, 8)
         suggested_version_4, = raw_unpack(INT_32, raw_data, 12)
         client_requested_versions = [suggested_version_1, suggested_version_2, suggested_version_3, suggested_version_4]
-        log.info("C: <VERSION> [0x%08x, 0x%08x, 0x%08x, 0x%08x]" % tuple(client_requested_versions))
+        log.debug("C: <VERSION> [0x%08x, 0x%08x, 0x%08x, 0x%08x]" % tuple(client_requested_versions))
 
-        v = self.script.protocol_version
+        v = self.script.bolt_version
         if v not in client_requested_versions:
             raise RuntimeError("Script protocol version %r not offered by client" % v)
 
         # only single protocol version is currently supported
         response = raw_pack(INT_32, v)
-        log.info("S: <VERSION> 0x%08x" % v)
-        self.peers[sock].version = v
+        log.debug("S: <VERSION> 0x%08x" % v)
+        self.peers[sock].bolt_version = v
         sock.send(response)
 
     def handle_request(self, sock):
-        v = self.peers[sock].version
+        v = self.peers[sock].bolt_version
 
         chunked_data = b""
         message_data = b""
@@ -304,40 +327,50 @@ class StubServer(Thread):
             else:
                 chunk = b""
             debug.append("     [%s] %s" % (h(chunk_header), h(chunk)))
-        request = unpacked(message_data)
+        request = unpack(message_data)
 
         if self.script.match_request(request):
             # explicitly matched
-            log.info("C: %s", message_repr(v, *request))
+            log.debug("C: %s", message_repr(v, request))
         elif self.script.match_auto_request(request):
             # auto matched
-            log.info("C! %s", message_repr(v, *request))
+            log.debug("C! %s", message_repr(v, request))
         else:
             # not matched
-            log.error("C: %s", message_repr(v, *request))
+            if self.script.lines:
+                expected = message_repr(v, self.script.lines[0].message)
+            else:
+                expected = "END OF SCRIPT"
+            log.debug("C: %s", message_repr(v, request))
+            log.error("Message mismatch (expected <%s>, "
+                      "received <%s>)", expected, message_repr(v, request))
+            self.stop()
+            raise SystemExit(EXIT_OFF_SCRIPT)
 
         responses = self.script.match_responses()
         if not responses and self.script.match_auto_request(request):
             # These are hard-coded and therefore not very future-proof.
-            if request[0] in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
-                responses = [(SERVER[v]["SUCCESS"], {u"server": u"Neo4j/9.99.999"})]
-            elif request[0] == CLIENT[v].get("GOODBYE"):
-                log.info("S: <EXIT>")
-                exit(0)
-            elif request[0] == CLIENT[v]["RUN"]:
-                responses = [(SERVER[v]["SUCCESS"], {u"fields": []})]
+            if request.tag in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
+                responses = [Structure(SERVER[v]["SUCCESS"], {"server": server_agents.get(v, "Neo4j/9.99.999")})]
+            elif request.tag == CLIENT[v].get("GOODBYE"):
+                log.debug("S: <EXIT>")
+                self.stop()
+                raise SystemExit(EXIT_OK)
+            elif request.tag == CLIENT[v]["RUN"]:
+                responses = [Structure(SERVER[v]["SUCCESS"], {"fields": []})]
             else:
-                responses = [(SERVER[v]["SUCCESS"], {})]
+                responses = [Structure(SERVER[v]["SUCCESS"], {})]
         for response in responses:
-            if isinstance(response, tuple):
-                data = packed(response)
+            if isinstance(response, Structure):
+                data = pack(response)
                 self.send_chunk(sock, data)
                 self.send_chunk(sock)
-                log.info("S: %s", message_repr(v, *response))
+                log.debug("S: %s", message_repr(v, Structure(response.tag, *response.fields)))
             elif isinstance(response, ExitCommand):
-                exit(0)
+                self.stop()
+                raise SystemExit(EXIT_OK)
             else:
-                raise RuntimeError("Unknown response type %r" % response)
+                raise RuntimeError("Unknown response type %r" % (response,))
 
     def send_chunk(self, sock, data=b""):
         header = raw_pack(UINT_16, len(data))
@@ -348,9 +381,9 @@ class StubServer(Thread):
     def send_bytes(self, sock, data):
         try:
             sock.sendall(data)
-        except socket_error:
+        except OSError:
             log.error("S: <GONE>")
-            exit(1)
+            raise SystemExit(EXIT_OFF_SCRIPT)
         else:
             return h(data)
 
