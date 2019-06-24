@@ -36,6 +36,7 @@ from socket import socket, SOL_SOCKET, SO_REUSEADDR, SHUT_RDWR
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from sys import exit
 from threading import Thread
+from uuid import uuid4
 
 from .addressing import Address
 from .bytetools import h
@@ -351,7 +352,10 @@ class StubServer(Thread):
         if not responses and self.script.match_auto_request(request):
             # These are hard-coded and therefore not very future-proof.
             if request.tag in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
-                responses = [Structure(SERVER[v]["SUCCESS"], {"server": server_agents.get(v, "Neo4j/9.99.999")})]
+                responses = [Structure(SERVER[v]["SUCCESS"], {
+                    "connection_id": str(uuid4()),
+                    "server": server_agents.get(v, "Neo4j/9.99.999"),
+                })]
             elif request.tag == CLIENT[v].get("GOODBYE"):
                 log.debug("S: <EXIT>")
                 self.stop()
