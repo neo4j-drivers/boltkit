@@ -373,7 +373,7 @@ class UnixController(Controller):
 
     def stop(self, kill=False):
         if kill:
-            output = _invoke([path_join(self.home, "bin", "neo4j"), "status"])
+            output = _invoke([path_join(self.home, "bin", "neo4j"), "status"]).decode("utf-8")
             if output.startswith("Neo4j is running"):
                 pid = output.split(" ")[-1].strip()
                 _invoke(["kill", "-9", pid])
