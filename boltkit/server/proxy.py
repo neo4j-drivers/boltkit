@@ -28,7 +28,7 @@ from socket import socket, SOL_SOCKET, SO_REUSEADDR, AF_INET, AF_INET6
 from struct import unpack_from as raw_unpack
 from threading import Thread
 
-from boltkit.addressing import Address
+from boltkit.addressing import Address, AddressList
 from boltkit.server.bytetools import h
 from boltkit.client import CLIENT, SERVER
 from boltkit.client.packstream import UINT_32, Unpackable
@@ -118,7 +118,9 @@ class ProxyServer(Thread):
         super(ProxyServer, self).__init__()
         self.socket = socket()
         self.socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        self.socket.bind(listen_addr or Address.parse(":17687"))
+        addresses = AddressList([listen_addr or Address.parse(":17687")])
+        addresses.resolve(family=AF_INET)
+        self.socket.bind(addresses[0])
         self.socket.listen(0)
         server_addr.resolve()
         self.server_addr = server_addr[0]
