@@ -131,10 +131,14 @@ class Cluster:
             http_listen_address = _localhost(next(port_generator))
             https_listen_address = _localhost(next(port_generator))
             transaction_listen_address = _localhost(next(port_generator))
+            discovery_listen_address = _localhost(next(port_generator))
 
-            read_replica_config = config.for_read_replica(initial_discovery_members, bolt_listen_address,
-                                                          http_listen_address, https_listen_address,
-                                                          transaction_listen_address)
+            read_replica_config = config.for_read_replica(initial_discovery_members,
+                                                          bolt_listen_address,
+                                                          http_listen_address,
+                                                          https_listen_address,
+                                                          transaction_listen_address,
+                                                          discovery_listen_address)
 
             os_dependent_config = controller.os_dependent_config(read_replica_dir)
             read_replica_config.update(os_dependent_config)
@@ -172,6 +176,8 @@ class Cluster:
         if isdir(cluster_home_dir):
             cluster_member_dirs = listdir(cluster_home_dir)
             for cluster_member_dir in cluster_member_dirs:
+                if cluster_member_dir.startswith("."):
+                    continue
                 neo4j_dirs = listdir(path_join(cluster_home_dir, cluster_member_dir))
                 for neo4j_dir in neo4j_dirs:
                     if neo4j_dir.startswith("neo4j"):
