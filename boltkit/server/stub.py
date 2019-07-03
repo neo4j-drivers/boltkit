@@ -211,7 +211,8 @@ class StubServer(Thread):
         if not responses and self.script.match_auto_request(request):
             # These are hard-coded and therefore not very future-proof.
             if request.tag in (CLIENT[v].get("HELLO"), CLIENT[v].get("INIT")):
-                responses = [Structure(SERVER[v]["SUCCESS"], {"server": server_agents.get(v, "Neo4j/9.99.999")})]
+                responses = [Structure(SERVER[v]["SUCCESS"], {"server": server_agents.get(v, "Neo4j/9.99.999"),
+                                                              "connection_id": "bolt-123456789"})]  # prefer a counter
             elif request.tag == CLIENT[v].get("GOODBYE"):
                 log.debug("S: <EXIT>")
                 self.stop()

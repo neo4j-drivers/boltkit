@@ -23,7 +23,7 @@ from itertools import chain
 from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
-from time import sleep
+import signal
 
 import click
 
@@ -31,7 +31,7 @@ from boltkit.addressing import Address, AddressList
 from boltkit.auth import AuthParamType, Auth
 from boltkit.client import Connection
 from boltkit.dist import Distributor
-from boltkit.server import Neo4jService
+from boltkit.server import Neo4jService, DEFAULT_WAIT_TIMEOUT
 from boltkit.server.proxy import ProxyServer
 from boltkit.server.stub import StubServer
 from boltkit.watcher import watch
@@ -206,6 +206,17 @@ def get(version, enterprise, s3, teamcity, windows):
         exit(1)
 
 
+def handle_input(value, neo4j):
+    if value == 'exit':
+        raise KeyboardInterrupt("exiting normally.")
+    elif value.startswith('stop'):
+        neo4j.stop_instance(value, timeout=DEFAULT_WAIT_TIMEOUT)
+    elif value.startswith('start all'):
+        neo4j.start_all(timeout=DEFAULT_WAIT_TIMEOUT)
+    elif value.startswith('start'):
+        neo4j.start_instance(value, timeout=DEFAULT_WAIT_TIMEOUT)
+
+
 @bolt.command(context_settings={"ignore_unknown_options": True}, help="""\
 Run a Neo4j cluster or standalone server in one or more local Docker 
 containers.
@@ -251,6 +262,20 @@ passed. These are:
               help="The number of read replicas to include within the "
                    "cluster. This option will only take effect if -c is also "
                    "used.")
+@click.option("--volume", multiple=True,
+              help="Extra volume settings to Neo4j docker container. "
+                   "Use this to provide data to and/or persist data outside of Neo4j docker container. "
+                   "The input format should be 'host_folder:container_folder'. "
+                   "Both of the folder paths should be absolute paths. "
+                   "When starting a cluster, sub-folders for each cluster are expected. "
+                   "Otherwise new sub-folders will be auto-created inside the given host folder.")
+@click.option("--user", type=int,
+              help="Specify the user to run Neo4j docker container.")
+@click.option("--env", multiple=True,
+              help="Extra environment variables to the neo4j docker container. "
+                   "Use this to pass customized configurations to neo4j. "
+                   "The configuration should be given in the format of 'neo4j_config_key=new_value' "
+                   "When starting a cluster, the configuration will be given to all cluster members.")
 @click.option("-v", "--verbose", count=True, callback=watch_log,
               expose_value=False, is_eager=True,
               help="Show more detail about the startup and shutdown process.")
@@ -258,23 +283,26 @@ passed. These are:
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            addr = AddressList(chain(*(r.addresses for r in neo4j.routers)))
+            addr = " ".join(list("{}={}".format(r.fq_name, r.addresses) for r in neo4j.machines))
             auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
+            signal.signal(signal.SIGTERM, neo4j.exit_gracefully)
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True, env={
-                    "BOLT_SERVER_ADDR": str(addr),
+                    "BOLT_SERVER_ADDR": addr,
                     "NEO4J_AUTH": auth,
                 })
             else:
                 click.echo("BOLT_SERVER_ADDR='{}'".format(addr))
                 click.echo("NEO4J_AUTH='{}'".format(auth))
-                click.echo("Press Ctrl+C to exit")
+                click.echo("Type 'exit' to exit")
                 while True:
-                    sleep(0.1)
+                    value = click.prompt(">", type=str)
+                    handle_input(value, neo4j)
+                    click.echo("Type 'exit' to exit")  # I user this sentence to know the handling is done.
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        click.echo(" ".join(map(str, e.args)), err=True)
+        click.echo(" ".join(map(str, e)), err=True)
         exit(1)
 
 

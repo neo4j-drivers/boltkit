@@ -18,11 +18,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from time import sleep
 from itertools import chain
 from logging import getLogger
 from math import ceil
-from os import getenv
+from os import getenv, path, makedirs
 from threading import Thread
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -35,12 +35,20 @@ from urllib3 import PoolManager, make_headers
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
 
-
 TEAMCITY_USER = getenv("TEAMCITY_USER")
 TEAMCITY_PASSWORD = getenv("TEAMCITY_PASSWORD")
 
-
 log = getLogger("boltkit")
+
+neo4j_config = {"dbms.memory.pagecache.size": "50m",
+                "dbms.memory.heap.initial_size": "300m",
+                "dbms.memory.heap.max_size": "500m",
+                "dbms.transaction.bookmark_ready_timeout": "5s",
+                "dbms.backup.enabled": "false",
+                "dbms.connectors.default_listen_address": "::",
+                }
+
+DEFAULT_WAIT_TIMEOUT = 120  # 2 mins
 
 
 class Neo4jMachine:
@@ -53,7 +61,7 @@ class Neo4jMachine:
 
     ready = 0
 
-    def __init__(self, name, service_name, image, auth, bolt_port, http_port, **config):
+    def __init__(self, name, service_name, image, auth, bolt_port, http_port, volume, env, user, **config):
         self.name = name
         self.service_name = service_name
         self.fq_name = "{}.{}".format(self.name, self.service_name)
@@ -68,12 +76,26 @@ class Neo4jMachine:
             environment["NEO4J_AUTH"] = "{}/{}".format(self.auth[0], self.auth[1])
         if "enterprise" in image:
             environment["NEO4J_ACCEPT_LICENSE_AGREEMENT"] = "yes"
+
+        for key, value in neo4j_config.items():
+            environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
         for key, value in config.items():
             environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
+        for s in env:
+            key, value = s.split("=")
+            environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
+
         ports = {
             "7474/tcp": self.http_port,
             "7687/tcp": self.bolt_port,
         }
+
+        volumes = {}
+        for s in volume:
+            source, target = s.split(":")
+            # ensure host directory already exists before starting docker
+            makedirs(source, exist_ok=True)
+            volumes[source] = {'bind': target, 'mode': 'rw'}
 
         def create_container(img):
             return self.docker.containers.create(img,
@@ -82,7 +104,9 @@ class Neo4jMachine:
                                                  hostname=self.fq_name,
                                                  name=self.fq_name,
                                                  network=self.service_name,
-                                                 ports=ports)
+                                                 ports=ports,
+                                                 volumes=volumes,
+                                                 user=user)
 
         try:
             self.container = create_container(self.image)
@@ -95,13 +119,29 @@ class Neo4jMachine:
         return hash(self.container)
 
     def __repr__(self):
-        return "%s(fq_name=%r, image=%r, address=%r)" % (self.__class__.__name__, self.fq_name, self.image, self.addresses)
+        return "%s(fq_name=%r, image=%r, address=%r)" % (
+        self.__class__.__name__, self.fq_name, self.image, self.addresses)
 
     def start(self):
         log.info("Starting machine %r at «%s»", self.fq_name, self.addresses)
         self.container.start()
         self.container.reload()
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.service_name]["IPAddress"]
+
+    def await_stopped(self, timeout):
+        running = True
+        t = 0
+        while running and t < timeout:
+            try:
+                Connection.open(*self.addresses, auth=self.auth, timeout=0).close()
+            except OSError:
+                running = False
+            else:
+                sleep(1)
+                t += 1
+
+        if running:
+            log.error("Machine %r did not become unavailable within %rs" % (self.fq_name, timeout))
 
     def await_started(self, timeout):
         try:
@@ -120,10 +160,18 @@ class Neo4jMachine:
             self.ready = 1
             # log.info("Machine %r available", self.name)
 
+    def stop_remove(self, force=True):
+        log.info("Stopping and removing machine %r", self.fq_name)
+        self.container.stop()
+        self.container.remove(force=force)
+
     def stop(self):
         log.info("Stopping machine %r", self.fq_name)
         self.container.stop()
-        self.container.remove(force=True)
+
+    def restart(self):
+        log.info("Restarting machine %r", self.fq_name)
+        self.container.restart()
 
 
 class Neo4jService:
@@ -162,12 +210,14 @@ class Neo4jService:
         self.image = self._resolve_image(image)
         self.auth = auth or make_auth()
         self.machines = []
-        self.routers = []
+        self.routers = {}
+        self.rr = {}
+        self.stopped = {}
         self.network = None
 
     def __enter__(self):
         try:
-            self.start(timeout=300)
+            self.start(timeout=DEFAULT_WAIT_TIMEOUT)
         except KeyboardInterrupt:
             self.stop()
             raise
@@ -249,6 +299,15 @@ class Neo4jService:
         if timeout is not None:
             self.await_started(timeout)
 
+    def stop_instance(self, value, timeout=None):
+        pass
+
+    def start_instance(self, value, timeout=None):
+        pass
+
+    def start_all(self, timeout=None):
+        pass
+
     def await_started(self, timeout):
 
         def wait(machine):
@@ -263,12 +322,15 @@ class Neo4jService:
 
     def stop(self):
         log.info("Stopping service %r", self.name)
-        self._for_each_machine(lambda machine: machine.stop)
+        self._for_each_machine(lambda machine: machine.stop_remove)
         self.network.remove()
+
+    def exit_gracefully(self, signum, frame):
+        raise KeyboardInterrupt("Stopped gracefully.")
 
     @property
     def addresses(self):
-        return AddressList(chain(*(r.addresses for r in self.routers)))
+        return AddressList(chain(*(r.addresses for r in self.routers.values())))
 
     @classmethod
     def find_and_stop(cls, service_name):
@@ -281,24 +343,26 @@ class Neo4jService:
 
 
 class Neo4jStandaloneService(Neo4jService):
-
     default_image = "neo4j:latest"
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, volume=None, env=None, user=None, **parameters):
         super().__init__(name, **parameters)
-        self.machines.append(Neo4jMachine(
+        machine = Neo4jMachine(
             "z",
             self.name,
             self.image,
             auth=self.auth,
             bolt_port=bolt_port or self.default_bolt_port,
             http_port=http_port or self.default_http_port,
-        ))
-        self.routers.extend(self.machines)
+            volume=volume or {},
+            env=env or {},
+            user=user,
+        )
+        self.routers[machine.fq_name] = machine
+        self.machines.append(machine)
 
 
 class Neo4jClusterService(Neo4jService):
-
     default_image = "neo4j:enterprise"
 
     # The minimum and maximum number of cores permitted
@@ -316,14 +380,22 @@ class Neo4jClusterService(Neo4jService):
     def _port_range(cls, base_port, count):
         return range(base_port, base_port + count)
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, **parameters):
+    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, volume=None, env=None,
+                 user=None, **parameters):
         super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
+        if not "enterprise" in self.image:
+            raise ValueError("Enterprise neo4j docker image is required for cluster")
         self.n_cores = n_cores or self.min_cores
         self.n_replicas = n_replicas or self.min_replicas
         if not self.min_cores <= self.n_cores <= self.max_cores:
             raise ValueError("A cluster must have been {} and {} cores".format(self.min_cores, self.max_cores))
         if not self.min_replicas <= self.n_replicas <= self.max_replicas:
-            raise ValueError("A cluster must have been {} and {} read replicas".format(self.min_replicas, self.max_replicas))
+            raise ValueError(
+                "A cluster must have been {} and {} read replicas".format(self.min_replicas, self.max_replicas))
+        if volume is None:
+            volume = {}
+        if env is None:
+            env = {}
 
         # CORES
         # =====
@@ -335,22 +407,27 @@ class Neo4jClusterService(Neo4jService):
         core_names = [chr(i) for i in range(97, 97 + self.n_cores)]
         core_addresses = ["{}.{}:5000".format(name, self.name) for name in core_names]
         #
-        self.machines.extend(Neo4jMachine(
-            core_names[i],
-            self.name,
-            self.image,
-            auth=self.auth,
-            bolt_port=core_bolt_port_range[i],
-            http_port=core_http_port_range[i],
-            **{
-                "causal_clustering.initial_discovery_members": ",".join(core_addresses),
-                "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
-                "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
-                "dbms.connector.bolt.advertised_address": "localhost:{}".format(core_bolt_port_range[i]),
-                "dbms.mode": "CORE",
-            }
-        ) for i in range(self.n_cores or 0))
-        self.routers.extend(self.machines)
+        for i in range(self.n_cores or 0):
+            machine = Neo4jMachine(
+                core_names[i],
+                self.name,
+                self.image,
+                auth=self.auth,
+                bolt_port=core_bolt_port_range[i],
+                http_port=core_http_port_range[i],
+                volume=["{}:{}".format(path.join(s.split(":")[0], core_names[i]), s.split(":")[1]) for s in volume],
+                env=env,
+                user=user,
+                **{
+                    "causal_clustering.initial_discovery_members": ",".join(core_addresses),
+                    "causal_clustering.minimum_core_cluster_size_at_formation": self.n_cores,
+                    # "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
+                    "dbms.connector.bolt.advertised_address": "localhost:{}".format(core_bolt_port_range[i]),
+                    "dbms.mode": "CORE",
+                }
+            )
+            self.routers[machine.fq_name] = machine
+        self.machines.extend(self.routers.values())
 
         # REPLICAS
         # ========
@@ -361,16 +438,65 @@ class Neo4jClusterService(Neo4jService):
         # Calculate machine names
         replica_names = [chr(i) for i in range(48, 48 + self.n_replicas)]
         #
-        self.machines.extend(Neo4jMachine(
-            replica_names[i],
-            self.name,
-            self.image,
-            auth=self.auth,
-            bolt_port=replica_bolt_port_range[i],
-            http_port=replica_http_port_range[i],
-            **{
-                "causal_clustering.initial_discovery_members": ",".join(core_addresses),
-                "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),
-                "dbms.mode": "READ_REPLICA",
-            }
-        ) for i in range(self.n_replicas or 0))
+        for i in range(self.n_replicas or 0):
+            machine = Neo4jMachine(
+                replica_names[i],
+                self.name,
+                self.image,
+                auth=self.auth,
+                bolt_port=replica_bolt_port_range[i],
+                http_port=replica_http_port_range[i],
+                volume=["{}:{}".format(path.join(s.split(":")[0], replica_names[i]), s.split(":")[1]) for s in volume],
+                env=env,
+                user=user,
+                **{
+                    "causal_clustering.initial_discovery_members": ",".join(core_addresses),
+                    "dbms.connector.bolt.advertised_address": "localhost:{}".format(replica_bolt_port_range[i]),
+                    "dbms.mode": "READ_REPLICA",
+                }
+            )
+            self.rr[machine.fq_name] = machine
+        self.machines.extend(self.rr.values())
+
+    def stop_instance(self, value, timeout=None):
+        name = value.split()[1]
+
+        if name in self.routers:
+            machine = self.routers[name]
+        elif name in self.rr:
+            machine = self.rr[name]
+        else:
+            raise ValueError("Failed to find an instance named {}".format(name))
+
+        machine.stop()
+        self.stopped[machine.fq_name] = machine
+
+        # wait for instance to be stopped
+        if timeout is not None:
+            machine.await_stopped(timeout=timeout)
+
+    def start_instance(self, value, timeout=None):
+        name = value.split()[1]
+
+        if name in self.routers:
+            machine = self.routers[name]
+        elif name in self.rr:
+            machine = self.rr[name]
+        else:
+            raise ValueError("Failed to find an instance named {}".format(name))
+
+        machine.restart()
+        self.stopped.pop(name, None)
+
+        # wait for instance to be started
+        if timeout is not None:
+            machine.await_started(timeout=timeout)
+
+    def start_all(self, timeout=None):
+        for fq_name, machine in self.stopped.items():
+            machine.restart()
+        self.stopped = {}
+
+        # wait for all to be started
+        if timeout is not None:
+            self.await_started(timeout)
