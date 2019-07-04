@@ -416,7 +416,7 @@ class WindowsController(Controller):
     def stop(self, kill=False):
         if kill:
             windows_service_name = config.extract_windows_service_name(self.home)
-            sc_output = _invoke(["sc", "queryex", windows_service_name])
+            sc_output = _invoke(["sc", "queryex", windows_service_name]).decode("utf-8")
             pid = None
             for line in sc_output.splitlines():
                 line = line.strip()
