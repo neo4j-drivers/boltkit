@@ -109,7 +109,7 @@ def client(cypher, server_addr, auth, transaction, bolt_version):
             for record in records:
                 click.echo("\t".join(map(str, record)))
     except Exception as e:
-        click.echo(" ".join(map(str, e.args)))
+        click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
 
@@ -258,16 +258,10 @@ passed. These are:
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            addr = AddressList(chain(*(r.addresses for r in neo4j.routers)))
-            auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
             if command:
-                run(" ".join(map(shlex_quote, command)), shell=True, env={
-                    "BOLT_SERVER_ADDR": str(addr),
-                    "NEO4J_AUTH": auth,
-                })
+                run(" ".join(map(shlex_quote, command)), shell=True,
+                    env=neo4j.env())
             else:
-                click.echo("BOLT_SERVER_ADDR='{}'".format(addr))
-                click.echo("NEO4J_AUTH='{}'".format(auth))
                 neo4j.console(
                     read=lambda t: click.prompt(t, prompt_suffix="> "),
                     write=click.echo,

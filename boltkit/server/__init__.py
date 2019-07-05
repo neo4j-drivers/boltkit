@@ -25,6 +25,7 @@ from math import ceil
 from os import getenv
 from shlex import split as shlex_split
 from threading import Thread
+from time import sleep
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -151,21 +152,27 @@ class Neo4jMachine:
         Connection.open(*self.addresses, auth=self.auth, timeout=timeout).close()
 
     def await_started(self, timeout):
-        try:
-            self.ping(timeout)
-        except OSError:
-            self.container.reload()
-            state = self.container.attrs["State"]
-            if state["Status"] == "exited":
-                self.ready = -1
-                log.error("Machine %r exited with code %r" % (self.spec.fq_name, state["ExitCode"]))
-                for line in self.container.logs().splitlines():
-                    log.error("> %s" % line.decode("utf-8"))
+        sleep(1)
+        self.container.reload()
+        if self.container.status == "running":
+            try:
+                self.ping(timeout)
+            except OSError:
+                self.container.reload()
+                state = self.container.attrs["State"]
+                if state["Status"] == "exited":
+                    self.ready = -1
+                    log.error("Machine %r exited with code %r", self.spec.fq_name, state["ExitCode"])
+                    for line in self.container.logs().splitlines():
+                        log.error("> %s" % line.decode("utf-8"))
+                else:
+                    log.error("Machine %r did not become available within %rs", self.spec.fq_name, timeout)
             else:
-                log.error("Machine %r did not become available within %rs" % (self.spec.fq_name, timeout))
+                self.ready = 1
         else:
-            self.ready = 1
-            # log.info("Machine %r available", self.name)
+            log.error("Machine %r is not running (status=%r)", self.spec.fq_name, self.container.status)
+            for line in self.container.logs().splitlines():
+                log.error("> %s" % line.decode("utf-8"))
 
     def stop(self):
         log.info("Stopping machine %r", self.spec.fq_name)
@@ -213,6 +220,8 @@ class Neo4jService:
         )
         self.image = self._resolve_image(image)
         self.auth = auth or make_auth()
+        if self.auth.user != "neo4j":
+            raise ValueError("Auth user must be 'neo4j' or empty")
         self.machines = {}
         self.network = None
         self.console_index = {}
@@ -337,6 +346,7 @@ class Neo4jService:
 
     def _update_console_index(self):
         self.console_index.update({
+            "env": self.console_env,
             "exit": self.console_exit,
             "help": self.console_help,
             "logs": self.console_logs,
@@ -348,6 +358,7 @@ class Neo4jService:
         self.console_read = read
         self.console_write = write
         self._update_console_index()
+        self.console_env()
         while True:
             self.console_args = shlex_split(self.console_read(self.name))
             try:
@@ -356,6 +367,22 @@ class Neo4jService:
                 self.console_write("ERROR!")
             else:
                 f()
+
+    def env(self):
+        """ Show environment variables
+        """
+        addr = AddressList(chain(*(r.addresses for r in self.routers)))
+        auth = "{}:{}".format(self.auth.user, self.auth.password)
+        return {
+            "BOLT_SERVER_ADDR": str(addr),
+            "NEO4J_AUTH": auth,
+        }
+
+    def console_env(self):
+        """ Show environment variables
+        """
+        for key, value in sorted(self.env().items()):
+            self.console_write("%s=%r" % (key, value))
 
     def console_exit(self):
         """ Shutdown and exit
