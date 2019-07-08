@@ -473,17 +473,17 @@ class Connection:
         while not response.complete():
             self.fetch_one()
 
-    def run(self, statement, parameters=None, metadata=None):
+    def run(self, cypher, parameters=None, metadata=None):
         parameters = parameters or {}
         metadata = metadata or {}
         if self.bolt_version >= 3:
-            log.debug("C: RUN %r %r %r", statement, parameters, metadata)
-            run = Structure(CLIENT[self.bolt_version]["RUN"], statement, parameters, metadata)
+            log.debug("C: RUN %r %r %r", cypher, parameters, metadata)
+            run = Structure(CLIENT[self.bolt_version]["RUN"], cypher, parameters, metadata)
         elif metadata:
             raise ProtocolError("RUN metadata is not available in Bolt v%d" % self.bolt_version)
         else:
-            log.debug("C: RUN %r %r", statement, parameters)
-            run = Structure(CLIENT[self.bolt_version]["RUN"], statement, parameters)
+            log.debug("C: RUN %r %r", cypher, parameters)
+            run = Structure(CLIENT[self.bolt_version]["RUN"], cypher, parameters)
         self.requests.append(run)
         response = QueryResponse(self.bolt_version)
         self.responses.append(response)

@@ -24,6 +24,7 @@ from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
 from time import sleep
+from webbrowser import open as open_browser
 
 import click
 
@@ -212,7 +213,9 @@ containers.
 
 If an additional COMMAND is supplied, this will be executed after startup, 
 with a shutdown occurring immediately afterwards. If no COMMAND is supplied,
-the service will remain available until manually shutdown by Ctrl+C.
+an interactive command line console will be launched which allows direct
+control of the service. This console can be shut down with Ctrl+C, Ctrl+D or
+by entering the command 'exit'.
 
 A couple of environment variables will also be made available to any COMMAND
 passed. These are:
@@ -220,6 +223,10 @@ passed. These are:
 \b
 - BOLT_SERVER_ADDR
 - NEO4J_AUTH
+
+If the special COMMAND 'browser' is supplied, a Neo4j browser application page
+will instead be opened in the default local web browser for each machine
+created. This option will also launch the command line console.
 """)
 @click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH",
               help="Credentials with which to bootstrap the service. These "
@@ -258,7 +265,15 @@ passed. These are:
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            if command:
+            if command == ("browser",):
+                for machine in neo4j.machines:
+                    http_uri = "http://localhost:{}".format(machine.http_port)
+                    open_browser(http_uri)
+                neo4j.console(
+                    read=lambda t: click.prompt(t, prompt_suffix="> "),
+                    write=click.echo,
+                )
+            elif command:
                 run(" ".join(map(shlex_quote, command)), shell=True,
                     env=neo4j.env())
             else:

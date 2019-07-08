@@ -34,6 +34,7 @@ from docker import DockerClient
 from docker.errors import ImageNotFound
 from urllib3 import PoolManager, make_headers
 
+from boltkit.addressing import Address
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
 
@@ -76,6 +77,10 @@ class Neo4jMachineSpec:
     @property
     def discovery_address(self):
         return "{}.{}:5000".format(self.name, self.service_name)
+
+    @property
+    def http_uri(self):
+        return "http://localhost:{}".format(self.http_port)
 
 
 class Neo4jCoreMachineSpec(Neo4jMachineSpec):
@@ -344,6 +349,33 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
+    def get_routing_info(self):
+        with Connection.open(*self.addresses, auth=self.auth) as cx:
+            records = []
+            cx.run("CALL dbms.cluster.routing.getRoutingTable($context)",
+                   {"context": {}})
+            cx.pull(-1, -1, records)
+            cx.send_all()
+            cx.fetch_all()
+            ttl, server_lists = records[0]
+            routers = AddressList()
+            readers = AddressList()
+            writers = AddressList()
+            for server_list in server_lists:
+                role = server_list["role"]
+                addresses = map(Address.parse, server_list["addresses"])
+                if role == "ROUTE":
+                    routers[:] = addresses
+                elif role == "READ":
+                    readers[:] = addresses
+                elif role == "WRITE":
+                    writers[:] = addresses
+            return ttl, {
+                "routers": routers,
+                "readers": readers,
+                "writers": writers,
+            }
+
     def _update_console_index(self):
         self.console_index.update({
             "env": self.console_env,
@@ -352,6 +384,7 @@ class Neo4jService:
             "logs": self.console_logs,
             "ls": self.console_list,
             "ping": self.console_ping,
+            "routing": self.console_routing,
         })
 
     def console(self, read, write):
@@ -400,13 +433,16 @@ class Neo4jService:
     def console_list(self):
         """ List active servers
         """
+        ttl, servers = self.get_routing_info()
+        writers = servers["writers"]
         self.console_write("NAME        BOLT PORT   HTTP PORT   "
                            "MODE           CONTAINER")
         for spec, machine in self.machines.items():
-            self.console_write("{:<12}{:<12}{:<12}{:<15}{}".format(
+            self.console_write("{:<12}{:<12}{:<11}{}{:<15}{}".format(
                 spec.fq_name,
                 spec.bolt_port,
                 spec.http_port,
+                "*" if ("localhost", str(spec.bolt_port)) in writers else " ",
                 spec.config.get("dbms.mode", "SINGLE"),
                 machine.container.short_id,
             ))
@@ -425,6 +461,15 @@ class Neo4jService:
                 found += 1
         if not found:
             self.console_write("Machine {} not found".format(name))
+
+    def console_routing(self):
+        """ Show routing table
+        """
+        ttl, servers = self.get_routing_info()
+        self.console_write("Routers: «%s»" % servers["routers"])
+        self.console_write("Readers: «%s»" % servers["readers"])
+        self.console_write("Writers: «%s»" % servers["writers"])
+        self.console_write("(TTL: %rs)" % ttl)
 
     def console_logs(self):
         """ Display server logs
