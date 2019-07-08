@@ -267,8 +267,7 @@ def server(command, name, **parameters):
         with Neo4jService(name, **parameters) as neo4j:
             if command == ("browser",):
                 for machine in neo4j.machines:
-                    http_uri = "http://localhost:{}".format(machine.http_port)
-                    open_browser(http_uri)
+                    open_browser(machine.http_uri)
                 neo4j.console(
                     read=lambda t: click.prompt(t, prompt_suffix="> "),
                     write=click.echo,
@@ -284,6 +283,8 @@ def server(command, name, **parameters):
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
+        raise
+
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 

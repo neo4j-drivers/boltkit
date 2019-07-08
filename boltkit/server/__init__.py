@@ -24,6 +24,7 @@ from logging import getLogger
 from math import ceil
 from os import getenv
 from shlex import split as shlex_split
+from textwrap import wrap
 from threading import Thread
 from time import sleep
 from uuid import uuid4
@@ -82,6 +83,10 @@ class Neo4jMachineSpec:
     def http_uri(self):
         return "http://localhost:{}".format(self.http_port)
 
+    @property
+    def bolt_address(self):
+        return Address(("localhost", self.bolt_port))
+
 
 class Neo4jCoreMachineSpec(Neo4jMachineSpec):
 
@@ -110,6 +115,7 @@ class Neo4jMachine:
     def __init__(self, spec, image, auth):
         self.spec = spec
         self.image = image
+        self.address = Address(("localhost", self.spec.bolt_port))
         self.addresses = AddressList([("localhost", self.spec.bolt_port)])
         self.auth = auth
         self.docker = DockerClient.from_env(version="auto")
@@ -230,6 +236,10 @@ class Neo4jService:
         self.machines = {}
         self.network = None
         self.console_index = {}
+        self._routers = None
+        self._readers = None
+        self._writers = None
+        self._ttl = None
 
     def __enter__(self):
         try:
@@ -243,9 +253,26 @@ class Neo4jService:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
+    def _get_machine_by_address(self, address):
+        address = Address((address.host, address.port_number))
+        for spec, machine in self.machines.items():
+            if spec.bolt_address == address:
+                return machine
+
     @property
     def routers(self):
-        return list(self.machines.values())
+        if self._routers:
+            return list(self._routers)
+        else:
+            return list(self.machines.values())
+
+    @property
+    def readers(self):
+        return list(self._readers)
+
+    @property
+    def writers(self):
+        return list(self._writers)
 
     def _resolve_image(self, image):
         resolved = image or self.default_image
@@ -349,7 +376,7 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
-    def get_routing_info(self):
+    def _update_routing_info(self):
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             records = []
             cx.run("CALL dbms.cluster.routing.getRoutingTable($context)",
@@ -370,11 +397,10 @@ class Neo4jService:
                     readers[:] = addresses
                 elif role == "WRITE":
                     writers[:] = addresses
-            return ttl, {
-                "routers": routers,
-                "readers": readers,
-                "writers": writers,
-            }
+            self._routers = [self._get_machine_by_address(a) for a in routers]
+            self._readers = [self._get_machine_by_address(a) for a in readers]
+            self._writers = [self._get_machine_by_address(a) for a in writers]
+            self._ttl = ttl
 
     def _update_console_index(self):
         self.console_index.update({
@@ -384,7 +410,7 @@ class Neo4jService:
             "logs": self.console_logs,
             "ls": self.console_list,
             "ping": self.console_ping,
-            "routing": self.console_routing,
+            "rt": self.console_routing,
         })
 
     def console(self, read, write):
@@ -402,8 +428,6 @@ class Neo4jService:
                 f()
 
     def env(self):
-        """ Show environment variables
-        """
         addr = AddressList(chain(*(r.addresses for r in self.routers)))
         auth = "{}:{}".format(self.auth.user, self.auth.password)
         return {
@@ -412,43 +436,62 @@ class Neo4jService:
         }
 
     def console_env(self):
-        """ Show environment variables
+        """ List the environment variables made available by this service.
         """
         for key, value in sorted(self.env().items()):
             self.console_write("%s=%r" % (key, value))
 
     def console_exit(self):
-        """ Shutdown and exit
+        """ Shutdown all machines and exit the console.
         """
         raise SystemExit()
 
     def console_help(self):
-        """ Display help
+        """ Show descriptions of all available console commands.
         """
-        width = max(map(len, self.console_index))
-        template = "{:<%d}   {}" % width
+        self.console_write("Commands:")
+        command_width = max(map(len, self.console_index))
+        text_width = 73 - command_width
+        template = "  {:<%d}   {}" % command_width
         for command, f in sorted(self.console_index.items()):
-            self.console_write(template.format(command, f.__doc__.strip()))
+            text = " ".join(line.strip() for line in f.__doc__.splitlines())
+            wrapped_text = wrap(text, text_width)
+            for i, line in enumerate(wrapped_text):
+                if i == 0:
+                    self.console_write(template.format(command, line))
+                else:
+                    self.console_write(template.format("", line))
 
     def console_list(self):
-        """ List active servers
+        """ Show a detailed list of the available servers. Each server is
+        listed by name, along with the ports open for Bolt and HTTP traffic,
+        the mode in which that server is operating -- CORE, READ_REPLICA or
+        SINGLE -- the roles it can fulfil -- (r)ead or (w)rite -- and the
+        Docker container in which it runs.
         """
-        ttl, servers = self.get_routing_info()
-        writers = servers["writers"]
         self.console_write("NAME        BOLT PORT   HTTP PORT   "
-                           "MODE           CONTAINER")
+                           "MODE           ROLES   CONTAINER")
         for spec, machine in self.machines.items():
-            self.console_write("{:<12}{:<12}{:<11}{}{:<15}{}".format(
+            if self._routers is None:
+                roles = "?"
+            else:
+                roles = ""
+                if machine in self._readers:
+                    roles += "r"
+                if machine in self._writers:
+                    roles += "w"
+            self.console_write("{:<12}{:<12}{:<12}{:<15}{:<8}{}".format(
                 spec.fq_name,
                 spec.bolt_port,
                 spec.http_port,
-                "*" if ("localhost", str(spec.bolt_port)) in writers else " ",
                 spec.config.get("dbms.mode", "SINGLE"),
+                roles,
                 machine.container.short_id,
             ))
 
     def console_ping(self):
-        """ Ping server
+        """ Ping a server by name to check it is available. If no server name
+        is provided, 'a' is used as a default.
         """
         try:
             name = self.console_args[1]
@@ -463,16 +506,19 @@ class Neo4jService:
             self.console_write("Machine {} not found".format(name))
 
     def console_routing(self):
-        """ Show routing table
+        """ Fetch an updated routing table and display the contents. The
+        routing information is cached so that any subsequent `ls` can show
+        role information along with each server.
         """
-        ttl, servers = self.get_routing_info()
-        self.console_write("Routers: «%s»" % servers["routers"])
-        self.console_write("Readers: «%s»" % servers["readers"])
-        self.console_write("Writers: «%s»" % servers["writers"])
-        self.console_write("(TTL: %rs)" % ttl)
+        self._update_routing_info()
+        self.console_write("Routers: «%s»" % AddressList(m.address for m in self._routers))
+        self.console_write("Readers: «%s»" % AddressList(m.address for m in self._readers))
+        self.console_write("Writers: «%s»" % AddressList(m.address for m in self._writers))
+        self.console_write("(TTL: %rs)" % self._ttl)
 
     def console_logs(self):
-        """ Display server logs
+        """ Display logs for a named server. If no server name is provided,
+        'a' is used as a default.
         """
         try:
             name = self.console_args[1]
@@ -632,19 +678,33 @@ class Neo4jClusterService(Neo4jService):
             self.console_write("A maximum of {} replicas "
                                "is permitted".format(self.max_replicas))
 
+    def _stop_machine(self, spec):
+        machine = self.machines[spec]
+        del self.machines[spec]
+        machine.stop()
+        if isinstance(spec, Neo4jCoreMachineSpec):
+            self.free_core_machine_specs.append(spec)
+        elif isinstance(spec, Neo4jReplicaMachineSpec):
+            self.free_replica_machine_specs.append(spec)
+
     def console_remove(self):
-        """ Remove server by name
+        """ Remove a server by name or role. Servers can be identified either
+        by their name (e.g. 'a', 'a.fbe340d') or by the role they fulfil
+        (e.g. 'r').
         """
         name = self.console_args[1]
         found = 0
         for spec, machine in list(self.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                del self.machines[spec]
-                machine.stop()
-                if isinstance(spec, Neo4jCoreMachineSpec):
-                    self.free_core_machine_specs.append(spec)
-                elif isinstance(spec, Neo4jReplicaMachineSpec):
-                    self.free_replica_machine_specs.append(spec)
+            if (name == "r" and self._readers is not None and
+                    machine in self._readers):
+                self._stop_machine(spec)
+                found += 1
+            elif (name == "w" and self._writers is not None and
+                  machine in self._writers):
+                self._stop_machine(spec)
+                found += 1
+            elif name in (spec.name, spec.fq_name):
+                self._stop_machine(spec)
                 found += 1
         if not found:
             self.console_write("Machine {} not found".format(name))
