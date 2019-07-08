@@ -24,6 +24,7 @@ from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
 from time import sleep
+from webbrowser import open as open_browser
 
 import click
 
@@ -109,7 +110,7 @@ def client(cypher, server_addr, auth, transaction, bolt_version):
             for record in records:
                 click.echo("\t".join(map(str, record)))
     except Exception as e:
-        click.echo(" ".join(map(str, e.args)))
+        click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
 
@@ -212,7 +213,9 @@ containers.
 
 If an additional COMMAND is supplied, this will be executed after startup, 
 with a shutdown occurring immediately afterwards. If no COMMAND is supplied,
-the service will remain available until manually shutdown by Ctrl+C.
+an interactive command line console will be launched which allows direct
+control of the service. This console can be shut down with Ctrl+C, Ctrl+D or
+by entering the command 'exit'.
 
 A couple of environment variables will also be made available to any COMMAND
 passed. These are:
@@ -220,6 +223,10 @@ passed. These are:
 \b
 - BOLT_SERVER_ADDR
 - NEO4J_AUTH
+
+If the special COMMAND 'browser' is supplied, a Neo4j browser application page
+will instead be opened in the default local web browser for each machine
+created. This option will also launch the command line console.
 """)
 @click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH",
               help="Credentials with which to bootstrap the service. These "
@@ -258,22 +265,26 @@ passed. These are:
 def server(command, name, **parameters):
     try:
         with Neo4jService(name, **parameters) as neo4j:
-            addr = AddressList(chain(*(r.addresses for r in neo4j.routers)))
-            auth = "{}:{}".format(neo4j.auth.user, neo4j.auth.password)
-            if command:
-                run(" ".join(map(shlex_quote, command)), shell=True, env={
-                    "BOLT_SERVER_ADDR": str(addr),
-                    "NEO4J_AUTH": auth,
-                })
+            if command == ("browser",):
+                for machine in neo4j.machines:
+                    open_browser(machine.http_uri)
+                neo4j.console(
+                    read=lambda t: click.prompt(t, prompt_suffix="> "),
+                    write=click.echo,
+                )
+            elif command:
+                run(" ".join(map(shlex_quote, command)), shell=True,
+                    env=neo4j.env())
             else:
-                click.echo("BOLT_SERVER_ADDR='{}'".format(addr))
-                click.echo("NEO4J_AUTH='{}'".format(auth))
-                click.echo("Press Ctrl+C to exit")
-                while True:
-                    sleep(0.1)
+                neo4j.console(
+                    read=lambda t: click.prompt(t, prompt_suffix="> "),
+                    write=click.echo,
+                )
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
+        raise
+
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
