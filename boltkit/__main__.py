@@ -283,8 +283,6 @@ def server(command, name, **parameters):
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        raise
-
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
