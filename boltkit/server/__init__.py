@@ -59,14 +59,15 @@ class Neo4jMachineSpec:
         "dbms.transaction.bookmark_ready_timeout": "5s",
     }
 
-    def __init__(self, name, service_name, bolt_port, http_port, **config):
+    def __init__(self, name, service_name, bolt_port, http_port, config):
         self.name = name
         self.service_name = service_name
         self.bolt_port = bolt_port
         self.http_port = http_port
-        self.config = dict(self.config)
+        self.config = dict(self.config or {})
         self.config["dbms.connector.bolt.advertised_address"] = "localhost:{}".format(self.bolt_port)
-        self.config.update(**config)
+        if config:
+            self.config.update(**config)
 
     def __hash__(self):
         return hash(self.fq_name)
@@ -90,16 +91,18 @@ class Neo4jMachineSpec:
 
 class Neo4jCoreMachineSpec(Neo4jMachineSpec):
 
-    def __init__(self, name, service_name, bolt_port, http_port, **config):
+    def __init__(self, name, service_name, bolt_port, http_port, config):
+        config = config or {}
         config["dbms.mode"] = "CORE"
-        super().__init__(name, service_name, bolt_port, http_port, **config)
+        super().__init__(name, service_name, bolt_port, http_port, config)
 
 
 class Neo4jReplicaMachineSpec(Neo4jMachineSpec):
 
-    def __init__(self, name, service_name, bolt_port, http_port, **config):
+    def __init__(self, name, service_name, bolt_port, http_port, config):
+        config = config or {}
         config["dbms.mode"] = "READ_REPLICA"
-        super().__init__(name, service_name, bolt_port, http_port, **config)
+        super().__init__(name, service_name, bolt_port, http_port, config)
 
 
 class Neo4jMachine:
@@ -211,13 +214,19 @@ class Neo4jService:
     console_args = None
     console_index = None
 
-    def __new__(cls, name=None, n_cores=None, **parameters):
+    def __new__(cls, name=None, image=None, auth=None,
+                n_cores=None, n_replicas=None,
+                bolt_port=None, http_port=None,
+                config=None):
         if n_cores:
             return object.__new__(Neo4jClusterService)
         else:
             return object.__new__(Neo4jStandaloneService)
 
-    def __init__(self, name=None, image=None, auth=None, **parameters):
+    def __init__(self, name=None, image=None, auth=None,
+                 n_cores=None, n_replicas=None,
+                 bolt_port=None, http_port=None,
+                 config=None):
         self.name = name or uuid4().hex[-7:]
         self.docker = DockerClient.from_env(version="auto")
         headers = {}
@@ -278,11 +287,16 @@ class Neo4jService:
         resolved = image or self.default_image
         if ":" not in resolved:
             resolved = "neo4j:" + image
+        if resolved.endswith("!"):
+            force = True
+            resolved = resolved[:-1]
+        else:
+            force = False
         if resolved == "neo4j:snapshot":
-            return self._pull_snapshot("community")
+            return self._pull_snapshot("community", force)
         elif resolved in ("neo4j:snapshot-enterprise",
                           "neo4j-enterprise:snapshot"):
-            return self._pull_snapshot("enterprise")
+            return self._pull_snapshot("enterprise", force)
         else:
             return resolved
 
@@ -291,20 +305,24 @@ class Neo4jService:
             self.snapshot_host))
         prefix = "neo4j-{}".format(edition)
         url = "{}/teamcity-ivy.xml".format(self.snapshot_build_url)
+        log.debug("Fetching build data from {}".format(url))
         r1 = self.http.request("GET", url)
+        if r1.status != 200:
+            raise RuntimeError("Download failed ({})".format(r1.status))
         root = ElementTree.fromstring(r1.data)
         for e in root.find("publications").findall("artifact"):
             attr = e.attrib
             if attr["type"] == "tar" and attr["name"].startswith(prefix):
                 return "{}.{}".format(attr["name"], attr["ext"])
+        raise ValueError("No artifact found for {} edition".format(edition))
 
     @classmethod
     def _derive_image_tag(cls, artifact_name):
-        if artifact_name.endswith("-docker-complete.tar"):
+        if artifact_name.endswith("-docker-loadable.tar"):
             artifact_name = artifact_name[:-20]
         else:
             raise ValueError("Expected artifact name to end with "
-                             "'-docker-complete.tar'")
+                             "'-docker-loadable.tar'")
         if artifact_name.startswith("neo4j-enterprise-"):
             return "neo4j-enterprise:{}".format(artifact_name[17:])
         elif artifact_name.startswith("neo4j-community-"):
@@ -313,21 +331,27 @@ class Neo4jService:
             raise ValueError("Expected artifact name to start with either "
                              "'neo4j-community-' or 'neo4j-enterprise-'")
 
-    def _pull_snapshot(self, edition):
+    def _download_snapshot_artifact(self, artifact):
+        log.info("Downloading {} from «{}»".format(
+            artifact, self.snapshot_host))
+        url = "{}/{}".format(self.snapshot_build_url, artifact)
+        r2 = self.http.request("GET", url)
+        images = self.docker.images.load(r2.data)
+        image = images[0]
+        return image.tags[0]
+
+    def _pull_snapshot(self, edition, force):
         artifact = self._resolve_artifact_name(edition)
-        derived = self._derive_image_tag(artifact)
-        try:
-            self.docker.images.get(derived)
-        except ImageNotFound:
-            log.info("Downloading {} from «{}»".format(
-                artifact, self.snapshot_host))
-            url = "{}/{}".format(self.snapshot_build_url, artifact)
-            r2 = self.http.request("GET", url)
-            images = self.docker.images.load(r2.data)
-            image = images[0]
-            return image.tags[0]
+        if force:
+            return self._download_snapshot_artifact(artifact)
         else:
-            return derived
+            derived = self._derive_image_tag(artifact)
+            try:
+                self.docker.images.get(derived)
+            except ImageNotFound:
+                return self._download_snapshot_artifact(artifact)
+            else:
+                return derived
 
     def _for_each_machine(self, f):
         threads = []
@@ -384,6 +408,8 @@ class Neo4jService:
             cx.pull(-1, -1, records)
             cx.send_all()
             cx.fetch_all()
+            if not records:
+                raise RuntimeError("Unable to obtain routing information")
             ttl, server_lists = records[0]
             routers = AddressList()
             readers = AddressList()
@@ -510,11 +536,15 @@ class Neo4jService:
         routing information is cached so that any subsequent `ls` can show
         role information along with each server.
         """
-        self._update_routing_info()
-        self.console_write("Routers: «%s»" % AddressList(m.address for m in self._routers))
-        self.console_write("Readers: «%s»" % AddressList(m.address for m in self._readers))
-        self.console_write("Writers: «%s»" % AddressList(m.address for m in self._writers))
-        self.console_write("(TTL: %rs)" % self._ttl)
+        try:
+            self._update_routing_info()
+        except RuntimeError:
+            self.console_write("Cannot obtain routing information")
+        else:
+            self.console_write("Routers: «%s»" % AddressList(m.address for m in self._routers))
+            self.console_write("Readers: «%s»" % AddressList(m.address for m in self._readers))
+            self.console_write("Writers: «%s»" % AddressList(m.address for m in self._writers))
+            self.console_write("(TTL: %rs)" % self._ttl)
 
     def console_logs(self):
         """ Display logs for a named server. If no server name is provided,
@@ -537,13 +567,19 @@ class Neo4jStandaloneService(Neo4jService):
 
     default_image = "neo4j:latest"
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, **parameters):
-        super().__init__(name, **parameters)
+    def __init__(self, name=None, image=None, auth=None,
+                 n_cores=None, n_replicas=None,
+                 bolt_port=None, http_port=None,
+                 config=None):
+        super().__init__(name, image, auth,
+                         n_cores, n_replicas,
+                         bolt_port, http_port)
         spec = Neo4jMachineSpec(
-            "a",
-            self.name,
+            name="a",
+            service_name=self.name,
             bolt_port=bolt_port or self.default_bolt_port,
             http_port=http_port or self.default_http_port,
+            config=config,
         )
         self.machines[spec] = Neo4jMachine(
             spec,
@@ -571,8 +607,14 @@ class Neo4jClusterService(Neo4jService):
     def _port_range(cls, base_port, count):
         return range(base_port, base_port + count)
 
-    def __init__(self, name=None, bolt_port=None, http_port=None, n_cores=None, n_replicas=None, **parameters):
-        super().__init__(name, n_cores=n_cores, n_replicas=n_replicas, **parameters)
+    def __init__(self, name=None, image=None, auth=None,
+                 n_cores=None, n_replicas=None,
+                 bolt_port=None, http_port=None,
+                 config=None):
+        super().__init__(name, image, auth,
+                         n_cores, n_replicas,
+                         bolt_port, http_port,
+                         config)
         n_cores = n_cores or self.min_cores
         n_replicas = n_replicas or self.min_replicas
         if not self.min_cores <= n_cores <= self.max_cores:
@@ -584,14 +626,14 @@ class Neo4jClusterService(Neo4jService):
         core_http_port_range = self._port_range(http_port or self.default_http_port, self.max_cores)
         self.free_core_machine_specs = [
             Neo4jCoreMachineSpec(
-                chr(97 + i),
-                self.name,
-                core_bolt_port_range[i],
-                core_http_port_range[i],
-                **{
+                name=chr(97 + i),
+                service_name=self.name,
+                bolt_port=core_bolt_port_range[i],
+                http_port=core_http_port_range[i],
+                config=dict(config or {}, **{
                     "causal_clustering.minimum_core_cluster_size_at_formation": n_cores or self.min_cores,
                     "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
-                }
+                }),
             )
             for i in range(self.max_cores)
         ]
@@ -599,10 +641,11 @@ class Neo4jClusterService(Neo4jService):
         replica_http_port_range = self._port_range(ceil(core_http_port_range.stop / 10) * 10, self.max_replicas)
         self.free_replica_machine_specs = [
             Neo4jReplicaMachineSpec(
-                chr(48 + i),
-                self.name,
-                replica_bolt_port_range[i],
-                replica_http_port_range[i],
+                name=chr(48 + i),
+                service_name=self.name,
+                bolt_port=replica_bolt_port_range[i],
+                http_port=replica_http_port_range[i],
+                config=config,
             )
             for i in range(self.max_replicas)
         ]

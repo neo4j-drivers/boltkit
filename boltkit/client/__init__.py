@@ -448,7 +448,7 @@ class Connection:
             log.debug("C: INIT %r %r", user_agent, dict(auth_token, credentials="..."))
             request = Structure(CLIENT[self.bolt_version]["INIT"], user_agent, auth_token)
         self.requests.append(request)
-        response = Response(self.bolt_version)
+        response = Response(self)
         self.responses.append(response)
         self.send_all()
         self.fetch_all()
@@ -468,10 +468,8 @@ class Connection:
         log.debug("C: RESET")
         self.requests.append(Structure(CLIENT[self.bolt_version]["RESET"]))
         self.send_all()
-        response = Response(self.bolt_version)
+        response = Response(self)
         self.responses.append(response)
-        while not response.complete():
-            self.fetch_one()
 
     def run(self, cypher, parameters=None, metadata=None):
         parameters = parameters or {}
@@ -485,7 +483,7 @@ class Connection:
             log.debug("C: RUN %r %r", cypher, parameters)
             run = Structure(CLIENT[self.bolt_version]["RUN"], cypher, parameters)
         self.requests.append(run)
-        response = QueryResponse(self.bolt_version)
+        response = QueryResponse(self)
         self.responses.append(response)
         return response
 
@@ -510,7 +508,7 @@ class Connection:
         else:
             log.debug("C: DISCARD_ALL")
             self.requests.append(Structure(CLIENT[v]["DISCARD_ALL"]))
-        response = QueryResponse(v)
+        response = QueryResponse(self)
         self.responses.append(response)
         return response
 
@@ -536,7 +534,7 @@ class Connection:
         else:
             log.debug("C: PULL_ALL")
             self.requests.append(Structure(CLIENT[v]["PULL_ALL"]))
-        response = QueryResponse(v, records)
+        response = QueryResponse(self, records)
         self.responses.append(response)
         return response
 
@@ -547,7 +545,7 @@ class Connection:
             self.requests.append(Structure(CLIENT[self.bolt_version]["BEGIN"], metadata))
         else:
             raise ProtocolError("BEGIN is not available in Bolt v%d" % self.bolt_version)
-        response = QueryResponse(self.bolt_version)
+        response = QueryResponse(self)
         self.responses.append(response)
         return response
 
@@ -557,7 +555,7 @@ class Connection:
             self.requests.append(Structure(CLIENT[self.bolt_version]["COMMIT"]))
         else:
             raise ProtocolError("COMMIT is not available in Bolt v%d" % self.bolt_version)
-        response = QueryResponse(self.bolt_version)
+        response = QueryResponse(self)
         self.responses.append(response)
         return response
 
@@ -567,7 +565,7 @@ class Connection:
             self.requests.append(Structure(CLIENT[self.bolt_version]["ROLLBACK"]))
         else:
             raise ProtocolError("ROLLBACK is not available in Bolt v%d" % self.bolt_version)
-        response = QueryResponse(self.bolt_version)
+        response = QueryResponse(self)
         self.responses.append(response)
         return response
 
@@ -589,8 +587,8 @@ class Connection:
         self.socket.sendall(b"".join(data))
 
     def fetch_one(self):
-        """ Receive exactly one response message from the server. This method blocks until either a
-        message arrives or the connection is terminated.
+        """ Receive exactly one response message from the server. This method
+        blocks until either a message arrives or the connection is terminated.
         """
 
         # Receive chunks of data until chunk_size == 0
@@ -604,23 +602,15 @@ class Connection:
 
         # Handle message
         response = self.responses[0]
-        try:
-            response.on_message(message.tag, *message.fields)
-        except Failure as failure:
-            if isinstance(failure.response, QueryResponse):
-                self.reset()
-            else:
-                self.close()
-            raise
-        finally:
-            if response.complete():
-                self.responses.pop(0)
+        response.on_message(message.tag, *message.fields)
+        if response.complete:
+            self.responses.pop(0)
 
     def fetch_summary(self):
         """ Fetch all messages up to and including the next summary message.
         """
         response = self.responses[0]
-        while not response.complete():
+        while not response.complete:
             self.fetch_one()
 
     def fetch_all(self):
@@ -633,21 +623,25 @@ class Connection:
 class Response:
     # Basic request that expects SUCCESS or FAILURE back, e.g. RESET
 
-    def __init__(self, bolt_version):
-        self.bolt_version = bolt_version
-        self.metadata = None
+    def __init__(self, connection):
+        self.connection = connection
+        self.metadata = {}
+        self.complete = False
 
-    def complete(self):
-        return self.metadata is not None
+    @property
+    def bolt_version(self):
+        return self.connection.bolt_version
 
     def on_success(self, data):
         log.debug("S: SUCCESS %r", data)
-        self.metadata = data
+        self.metadata.update(data)
+        self.complete = True
 
     def on_failure(self, data):
         log.debug("S: FAILURE %r", data)
-        self.metadata = data
-        raise Failure(self)
+        self.metadata.update(data)
+        self.complete = True
+        self.connection.close()
 
     def on_message(self, tag, data=None):
         if tag == SERVER[self.bolt_version]["SUCCESS"]:
@@ -655,26 +649,33 @@ class Response:
         elif tag == SERVER[self.bolt_version]["FAILURE"]:
             self.on_failure(data)
         else:
-            raise ProtocolError("Unexpected summary message with tag %02X received" % tag)
+            raise ProtocolError("Unexpected summary message with "
+                                "tag %02X received" % tag)
 
 
 class QueryResponse(Response):
     # Can also be IGNORED (RUN, DISCARD_ALL)
 
-    def __init__(self, bolt_version, records=None):
-        super().__init__(bolt_version)
+    def __init__(self, connection, records=None):
+        super().__init__(connection)
         self.ignored = False
         self.records = records
 
-    def on_ignored(self, data):
-        log.debug("S: IGNORED %r", data)
+    def on_ignored(self, _):
+        log.debug("S: IGNORED")
         self.ignored = True
-        self.metadata = data
+        self.complete = True
 
     def on_record(self, data):
         log.debug("S: RECORD %r", data)
         if self.records is not None:
             self.records.append(data)
+
+    def on_failure(self, data):
+        log.debug("S: FAILURE %r", data)
+        self.metadata.update(data)
+        self.complete = True
+        self.connection.reset()
 
     def on_message(self, tag, data=None):
         if tag == SERVER[self.bolt_version]["RECORD"]:

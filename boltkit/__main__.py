@@ -19,11 +19,9 @@
 # limitations under the License.
 
 
-from itertools import chain
 from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
-from time import sleep
 from webbrowser import open as open_browser
 
 import click
@@ -66,6 +64,14 @@ class AddressListParamType(click.ParamType):
 
     def __repr__(self):
         return 'HOST:PORT [HOST:PORT...]'
+
+
+class ConfigParamType(click.ParamType):
+
+    name = "NAME=VALUE"
+
+    def __repr__(self):
+        return 'NAME=VALUE'
 
 
 def watch_log(ctx, param, value):
@@ -242,6 +248,9 @@ created. This option will also launch the command line console.
                    "created. If omitted, a standalone service will be created "
                    "instead. See also -r for specifying the number of read "
                    "replicas.")
+@click.option("-C", "--config", type=ConfigParamType(), multiple=True,
+              help="Pass a configuration value into neo4j.conf. This can be "
+                   "used multiple times.")
 @click.option("-H", "--http-port", type=int,
               help="A port number (standalone) or base port number (cluster) "
                    "for HTTP traffic.")
@@ -249,7 +258,9 @@ created. This option will also launch the command line console.
               help="The Docker image tag to use for building containers. The "
                    "repository can also be included, but will default to "
                    "'neo4j'. Note that a Neo4j Enterprise Edition image is "
-                   "required for building clusters.")
+                   "required for building clusters. To pull the latest "
+                   "snapshot, use the magic image name 'snapshot'. To force a "
+                   "download (in case of caching), add a trailing '!'.")
 @click.option("-n", "--name",
               help="A Docker network name to which all servers will be "
                    "attached. If omitted, an auto-generated name will be "
@@ -262,9 +273,12 @@ created. This option will also launch the command line console.
               expose_value=False, is_eager=True,
               help="Show more detail about the startup and shutdown process.")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def server(command, name, **parameters):
+def server(command, name, image, auth, n_cores, n_replicas,
+           bolt_port, http_port, config):
     try:
-        with Neo4jService(name, **parameters) as neo4j:
+        config_dict = dict(item.partition("=")[::2] for item in config)
+        with Neo4jService(name, image, auth, n_cores, n_replicas,
+                          bolt_port, http_port, config_dict) as neo4j:
             if command == ("browser",):
                 for machine in neo4j.machines:
                     open_browser(machine.http_uri)
