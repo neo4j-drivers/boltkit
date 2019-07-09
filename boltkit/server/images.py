@@ -65,6 +65,15 @@ def resolve_image(image):
 
     If a 'file:' URI is passed in here instead of an image tag, the Docker
     image will be loaded from that file instead.
+
+    Examples of valid tags:
+    - 3.4.6
+    - neo4j:3.4.6
+    - latest
+    - snapshot
+    - snapshot!
+    - file:/home/me/image.tar
+
     """
     resolved = image
     if resolved.startswith("file:"):
