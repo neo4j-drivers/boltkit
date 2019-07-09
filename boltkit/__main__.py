@@ -256,11 +256,13 @@ created. This option will also launch the command line console.
                    "for HTTP traffic.")
 @click.option("-i", "--image",
               help="The Docker image tag to use for building containers. The "
-                   "repository can also be included, but will default to "
-                   "'neo4j'. Note that a Neo4j Enterprise Edition image is "
-                   "required for building clusters. To pull the latest "
-                   "snapshot, use the magic image name 'snapshot'. To force a "
-                   "download (in case of caching), add a trailing '!'.")
+                   "repository name can be included before the colon, but will "
+                   "default to 'neo4j' if omitted. Note that a Neo4j "
+                   "Enterprise Edition image is required for building "
+                   "clusters. To pull the latest snapshot, use the pseudo-tag "
+                   "'snapshot'. To force a download (in case of caching), add "
+                   "a trailing '!'. File URLs can also be passed, which can "
+                   "allow for loading images from local tar files.")
 @click.option("-n", "--name",
               help="A Docker network name to which all servers will be "
                    "attached. If omitted, an auto-generated name will be "

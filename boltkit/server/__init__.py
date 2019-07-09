@@ -22,26 +22,19 @@
 from itertools import chain
 from logging import getLogger
 from math import ceil
-from os import getenv
 from shlex import split as shlex_split
 from textwrap import wrap
 from threading import Thread
 from time import sleep
 from uuid import uuid4
-from xml.etree import ElementTree
 
-import certifi
 from docker import DockerClient
 from docker.errors import ImageNotFound
-from urllib3 import PoolManager, make_headers
 
 from boltkit.addressing import Address
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
-
-
-TEAMCITY_USER = getenv("TEAMCITY_USER")
-TEAMCITY_PASSWORD = getenv("TEAMCITY_PASSWORD")
+from boltkit.server.images import resolve_image
 
 
 log = getLogger("boltkit")
@@ -229,16 +222,7 @@ class Neo4jService:
                  config=None):
         self.name = name or uuid4().hex[-7:]
         self.docker = DockerClient.from_env(version="auto")
-        headers = {}
-        if TEAMCITY_USER and TEAMCITY_PASSWORD:
-            headers.update(make_headers(
-                basic_auth="{}:{}".format(TEAMCITY_USER, TEAMCITY_PASSWORD)))
-        self.http = PoolManager(
-            cert_reqs="CERT_REQUIRED",
-            ca_certs=certifi.where(),
-            headers=headers,
-        )
-        self.image = self._resolve_image(image)
+        self.image = resolve_image(image or self.default_image)
         self.auth = auth or make_auth()
         if self.auth.user != "neo4j":
             raise ValueError("Auth user must be 'neo4j' or empty")
@@ -282,76 +266,6 @@ class Neo4jService:
     @property
     def writers(self):
         return list(self._writers)
-
-    def _resolve_image(self, image):
-        resolved = image or self.default_image
-        if ":" not in resolved:
-            resolved = "neo4j:" + image
-        if resolved.endswith("!"):
-            force = True
-            resolved = resolved[:-1]
-        else:
-            force = False
-        if resolved == "neo4j:snapshot":
-            return self._pull_snapshot("community", force)
-        elif resolved in ("neo4j:snapshot-enterprise",
-                          "neo4j-enterprise:snapshot"):
-            return self._pull_snapshot("enterprise", force)
-        else:
-            return resolved
-
-    def _resolve_artifact_name(self, edition):
-        log.info("Resolving snapshot artifact name on «{}»".format(
-            self.snapshot_host))
-        prefix = "neo4j-{}".format(edition)
-        url = "{}/teamcity-ivy.xml".format(self.snapshot_build_url)
-        log.debug("Fetching build data from {}".format(url))
-        r1 = self.http.request("GET", url)
-        if r1.status != 200:
-            raise RuntimeError("Download failed ({})".format(r1.status))
-        root = ElementTree.fromstring(r1.data)
-        for e in root.find("publications").findall("artifact"):
-            attr = e.attrib
-            if attr["type"] == "tar" and attr["name"].startswith(prefix):
-                return "{}.{}".format(attr["name"], attr["ext"])
-        raise ValueError("No artifact found for {} edition".format(edition))
-
-    @classmethod
-    def _derive_image_tag(cls, artifact_name):
-        if artifact_name.endswith("-docker-loadable.tar"):
-            artifact_name = artifact_name[:-20]
-        else:
-            raise ValueError("Expected artifact name to end with "
-                             "'-docker-loadable.tar'")
-        if artifact_name.startswith("neo4j-enterprise-"):
-            return "neo4j-enterprise:{}".format(artifact_name[17:])
-        elif artifact_name.startswith("neo4j-community-"):
-            return "neo4j:{}".format(artifact_name[16:])
-        else:
-            raise ValueError("Expected artifact name to start with either "
-                             "'neo4j-community-' or 'neo4j-enterprise-'")
-
-    def _download_snapshot_artifact(self, artifact):
-        log.info("Downloading {} from «{}»".format(
-            artifact, self.snapshot_host))
-        url = "{}/{}".format(self.snapshot_build_url, artifact)
-        r2 = self.http.request("GET", url)
-        images = self.docker.images.load(r2.data)
-        image = images[0]
-        return image.tags[0]
-
-    def _pull_snapshot(self, edition, force):
-        artifact = self._resolve_artifact_name(edition)
-        if force:
-            return self._download_snapshot_artifact(artifact)
-        else:
-            derived = self._derive_image_tag(artifact)
-            try:
-                self.docker.images.get(derived)
-            except ImageNotFound:
-                return self._download_snapshot_artifact(artifact)
-            else:
-                return derived
 
     def _for_each_machine(self, f):
         threads = []
