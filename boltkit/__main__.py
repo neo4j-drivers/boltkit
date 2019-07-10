@@ -25,12 +25,13 @@ from subprocess import run
 from webbrowser import open as open_browser
 
 import click
+from click import Path
 
 from boltkit.addressing import Address, AddressList
 from boltkit.auth import AuthParamType, Auth
 from boltkit.client import Connection
 from boltkit.dist import Distributor
-from boltkit.server import Neo4jService
+from boltkit.server import Neo4jService, Neo4jDirectorySpec
 from boltkit.server.proxy import ProxyServer
 from boltkit.server.stub import StubServer
 from boltkit.watcher import watch
@@ -230,9 +231,6 @@ passed. These are:
 - BOLT_SERVER_ADDR
 - NEO4J_AUTH
 
-If the special COMMAND 'browser' is supplied, a Neo4j browser application page
-will instead be opened in the default local web browser for each machine
-created. This option will also launch the command line console.
 """)
 @click.option("-a", "--auth", type=AuthParamType(), envvar="NEO4J_AUTH",
               help="Credentials with which to bootstrap the service. These "
@@ -263,24 +261,44 @@ created. This option will also launch the command line console.
                    "'snapshot'. To force a download (in case of caching), add "
                    "a trailing '!'. File URLs can also be passed, which can "
                    "allow for loading images from local tar files.")
+@click.option("-I", "--import-dir", type=Path(exists=True, dir_okay=True,
+                                              writable=True),
+              help="Share a local directory for use by server import.")
+@click.option("-L", "--logs-dir", type=Path(exists=True, dir_okay=True,
+                                            writable=True),
+              help="Share a local directory for use by server logs. A "
+                   "subdirectory will be created for each machine.")
 @click.option("-n", "--name",
               help="A Docker network name to which all servers will be "
                    "attached. If omitted, an auto-generated name will be "
                    "used.")
+@click.option("-P", "--plugins-dir", type=Path(exists=True, dir_okay=True,
+                                               writable=True),
+              help="Share a local directory for use by server plugins.")
 @click.option("-r", "--n-replicas", type=int,
               help="The number of read replicas to include within the "
                    "cluster. This option will only take effect if -c is also "
                    "used.")
+@click.option("-S", "--certificates-dir", type=Path(exists=True, dir_okay=True,
+                                                    writable=True),
+              help="Share a local directory for use by server certificates.")
 @click.option("-v", "--verbose", count=True, callback=watch_log,
               expose_value=False, is_eager=True,
               help="Show more detail about the startup and shutdown process.")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 def server(command, name, image, auth, n_cores, n_replicas,
-           bolt_port, http_port, config):
+           bolt_port, http_port, import_dir, logs_dir,
+           plugins_dir, certificates_dir, config):
     try:
+        dir_spec = Neo4jDirectorySpec(
+            import_dir=import_dir,
+            logs_dir=logs_dir,
+            plugins_dir=plugins_dir,
+            certificates_dir=certificates_dir,
+        )
         config_dict = dict(item.partition("=")[::2] for item in config)
         with Neo4jService(name, image, auth, n_cores, n_replicas,
-                          bolt_port, http_port, config_dict) as neo4j:
+                          bolt_port, http_port, dir_spec, config_dict) as neo4j:
             if command == ("browser",):
                 for machine in neo4j.machines:
                     open_browser(machine.http_uri)
