@@ -450,7 +450,7 @@ class Neo4jClusterService(Neo4jService):
 
     # The minimum and maximum number of read replicas permitted
     min_replicas = 0
-    max_replicas = 10
+    max_replicas = 9
 
     default_bolt_port = 17601
     default_http_port = 17401
@@ -493,11 +493,11 @@ class Neo4jClusterService(Neo4jService):
             )
             for i in range(self.max_cores)
         ]
-        replica_bolt_port_range = self._port_range(ceil(core_bolt_port_range.stop / 10) * 10, self.max_replicas)
-        replica_http_port_range = self._port_range(ceil(core_http_port_range.stop / 10) * 10, self.max_replicas)
+        replica_bolt_port_range = self._port_range(ceil(core_bolt_port_range.stop / 10) * 10 + 1, self.max_replicas)
+        replica_http_port_range = self._port_range(ceil(core_http_port_range.stop / 10) * 10 + 1, self.max_replicas)
         self.free_replica_machine_specs = [
             Neo4jReplicaMachineSpec(
-                name=chr(48 + i),
+                name=chr(49 + i),
                 service_name=self.name,
                 bolt_port=replica_bolt_port_range[i],
                 http_port=replica_http_port_range[i],
