@@ -30,6 +30,7 @@ from uuid import uuid4
 
 from docker import DockerClient
 from docker.errors import ImageNotFound
+from docker.types import IPAMPool, IPAMConfig
 
 from boltkit.addressing import Address
 from boltkit.auth import make_auth
@@ -197,6 +198,7 @@ class Neo4jMachine:
         self.container.start()
         self.container.reload()
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.spec.service_name]["IPAddress"]
+        log.debug("Machine %r has internal IP address «%s»", self.spec.fq_name, self.ip_address)
 
     def ping(self, timeout):
         try:
@@ -327,7 +329,15 @@ class Neo4jService:
 
     def start(self, timeout=None):
         log.info("Starting service %r with image %r", self.name, self.image)
-        self.network = self.docker.networks.create(self.name)
+        i_pool = IPAMPool(
+            # TODO: make this configurable
+            subnet='172.20.0.0/16',
+            iprange='172.20.0.0/16',
+            gateway='172.20.0.254',
+            aux_addresses={},
+        )
+        i_config = IPAMConfig(pool_configs=[i_pool])
+        self.network = self.docker.networks.create(self.name, ipam=i_config)
         self._for_each_machine(lambda machine: machine.start)
         if timeout is not None:
             self.await_started(timeout)
