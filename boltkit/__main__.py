@@ -76,8 +76,7 @@ class ConfigParamType(click.ParamType):
 
 
 def watch_log(ctx, param, value):
-    if value:
-        watch("boltkit", DEBUG if value >= 2 else INFO)
+    watch("boltkit", DEBUG if value >= 1 else INFO)
 
 
 @click.group()
@@ -299,18 +298,11 @@ def server(command, name, image, auth, n_cores, n_replicas,
         config_dict = dict(item.partition("=")[::2] for item in config)
         with Neo4jService(name, image, auth, n_cores, n_replicas,
                           bolt_port, http_port, dir_spec, config_dict) as neo4j:
-            if command == ("browser",):
-                for machine in neo4j.machines:
-                    open_browser(machine.http_uri)
-                neo4j.console(
-                    read=lambda t: click.prompt(t, prompt_suffix="> "),
-                    write=click.echo,
-                )
-            elif command:
+            if command:
                 run(" ".join(map(shlex_quote, command)), shell=True,
                     env=neo4j.env())
             else:
-                neo4j.console(
+                neo4j.run_console(
                     read=lambda t: click.prompt(t, prompt_suffix="> "),
                     write=click.echo,
                 )

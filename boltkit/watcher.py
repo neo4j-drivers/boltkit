@@ -91,18 +91,19 @@ class ColourFormatter(Formatter):
 
     def format(self, record):
         s = super(ColourFormatter, self).format(record)
+        bits = s.split("  ", maxsplit=1)
+        bits[0] = bright_black(bits[0])
         if record.levelno == CRITICAL:
-            return bright_red(s)
+            bits[1] = bright_red(bits[1])
         elif record.levelno == ERROR:
-            return bright_yellow(s)
+            bits[1] = bright_yellow(bits[1])
         elif record.levelno == WARNING:
-            return yellow(s)
+            bits[1] = yellow(bits[1])
         elif record.levelno == INFO:
-            return cyan(s)
+            bits[1] = bits[1]
         elif record.levelno == DEBUG:
-            return blue(s)
-        else:
-            return s
+            bits[1] = cyan(bits[1])
+        return "  ".join(bits)
 
 
 class Watcher(object):
@@ -115,7 +116,8 @@ class Watcher(object):
         super(Watcher, self).__init__()
         self.logger_name = logger_name
         self.logger = getLogger(self.logger_name)
-        self.formatter = ColourFormatter("%(asctime)s  %(message)s")
+        self.formatter = ColourFormatter("%(asctime)s  %(message)s",
+                                         "%H:%M:%S")
 
     def watch(self, level=INFO, out=stdout):
         self.stop()

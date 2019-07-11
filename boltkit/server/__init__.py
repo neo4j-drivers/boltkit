@@ -24,12 +24,9 @@ from logging import getLogger
 from math import ceil
 from os import makedirs
 from os.path import join as path_join
-from shlex import split as shlex_split
-from textwrap import wrap
 from threading import Thread
 from time import sleep
 from uuid import uuid4
-from webbrowser import open as open_browser
 
 from docker import DockerClient
 from docker.errors import ImageNotFound
@@ -38,6 +35,7 @@ from boltkit.addressing import Address
 from boltkit.auth import make_auth
 from boltkit.client import AddressList, Connection
 from boltkit.server.images import resolve_image
+from boltkit.server.console import Neo4jConsole, Neo4jClusterConsole
 
 
 log = getLogger("boltkit")
@@ -201,7 +199,13 @@ class Neo4jMachine:
         self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.spec.service_name]["IPAddress"]
 
     def ping(self, timeout):
-        Connection.open(*self.addresses, auth=self.auth, timeout=timeout).close()
+        try:
+            with Connection.open(*self.addresses, auth=self.auth,
+                                 timeout=timeout):
+                log.info("Machine {!r} available".format(self.spec.fq_name))
+
+        except OSError:
+            log.info("Machine {!r} unavailable".format(self.spec.fq_name))
 
     def await_started(self, timeout):
         sleep(1)
@@ -247,11 +251,6 @@ class Neo4jService:
                           "lastSuccessful".format(snapshot_host,
                                                   snapshot_build_config_id))
 
-    console_read = None
-    console_write = None
-    console_args = None
-    console_index = None
-
     def __new__(cls, name=None, image=None, auth=None,
                 n_cores=None, n_replicas=None,
                 bolt_port=None, http_port=None,
@@ -273,11 +272,11 @@ class Neo4jService:
             raise ValueError("Auth user must be 'neo4j' or empty")
         self.machines = {}
         self.network = None
-        self.console_index = {}
-        self._routers = None
-        self._readers = None
-        self._writers = None
-        self._ttl = None
+        self._routers = ()
+        self._readers = ()
+        self._writers = ()
+        self._ttl = 0
+        self.console = None
 
     def __enter__(self):
         try:
@@ -312,6 +311,10 @@ class Neo4jService:
     def writers(self):
         return list(self._writers)
 
+    @property
+    def ttl(self):
+        return self._ttl
+
     def _for_each_machine(self, f):
         threads = []
         for spec, machine in self.machines.items():
@@ -338,8 +341,8 @@ class Neo4jService:
         if all(machine.ready == 1 for spec, machine in self.machines.items()):
             log.info("Service %r available", self.name)
         else:
-            log.error("Service %r unavailable - some machines failed", self.name)
-            raise OSError("Some machines failed")
+            raise RuntimeError("Service %r unavailable - "
+                               "some machines failed", self.name)
 
     def stop(self):
         log.info("Stopping service %r", self.name)
@@ -359,7 +362,7 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
-    def _update_routing_info(self):
+    def update_routing_info(self):
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             records = []
             cx.run("CALL dbms.cluster.routing.getRoutingTable($context)",
@@ -387,31 +390,9 @@ class Neo4jService:
             self._writers = [self._get_machine_by_address(a) for a in writers]
             self._ttl = ttl
 
-    def _update_console_index(self):
-        self.console_index.update({
-            "browser": self.console_browser,
-            "env": self.console_env,
-            "exit": self.console_exit,
-            "help": self.console_help,
-            "logs": self.console_logs,
-            "ls": self.console_list,
-            "ping": self.console_ping,
-            "rt": self.console_routing,
-        })
-
-    def console(self, read, write):
-        self.console_read = read
-        self.console_write = write
-        self._update_console_index()
-        self.console_env()
-        while True:
-            self.console_args = shlex_split(self.console_read(self.name))
-            try:
-                f = self.console_index[self.console_args[0]]
-            except KeyError:
-                self.console_write("ERROR!")
-            else:
-                f()
+    def run_console(self, read, write):
+        self.console = Neo4jConsole(self, read, write)
+        self.console.run()
 
     def env(self):
         addr = AddressList(chain(*(r.addresses for r in self.routers)))
@@ -420,124 +401,6 @@ class Neo4jService:
             "BOLT_SERVER_ADDR": str(addr),
             "NEO4J_AUTH": auth,
         }
-
-    def console_browser(self):
-        """ Start the Neo4j browser application for a named machine.
-        """
-        try:
-            name = self.console_args[1]
-        except IndexError:
-            name = "a"
-        found = 0
-        for spec, machine in list(self.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                self.console_write("Opening web browser for machine {!r} at "
-                                   "«{}»".format(spec.fq_name, spec.http_uri))
-                open_browser(spec.http_uri)
-                found += 1
-        if not found:
-            self.console_write("Machine {} not found".format(name))
-
-    def console_env(self):
-        """ List the environment variables made available by this service.
-        """
-        for key, value in sorted(self.env().items()):
-            self.console_write("%s=%r" % (key, value))
-
-    def console_exit(self):
-        """ Shutdown all machines and exit the console.
-        """
-        raise SystemExit()
-
-    def console_help(self):
-        """ Show descriptions of all available console commands.
-        """
-        self.console_write("Commands:")
-        command_width = max(map(len, self.console_index))
-        text_width = 73 - command_width
-        template = "  {:<%d}   {}" % command_width
-        for command, f in sorted(self.console_index.items()):
-            text = " ".join(line.strip() for line in f.__doc__.splitlines())
-            wrapped_text = wrap(text, text_width)
-            for i, line in enumerate(wrapped_text):
-                if i == 0:
-                    self.console_write(template.format(command, line))
-                else:
-                    self.console_write(template.format("", line))
-
-    def console_list(self):
-        """ Show a detailed list of the available servers. Each server is
-        listed by name, along with the ports open for Bolt and HTTP traffic,
-        the mode in which that server is operating -- CORE, READ_REPLICA or
-        SINGLE -- the roles it can fulfil -- (r)ead or (w)rite -- and the
-        Docker container in which it runs.
-        """
-        self.console_write("NAME        BOLT PORT   HTTP PORT   "
-                           "MODE           ROLES   CONTAINER")
-        for spec, machine in self.machines.items():
-            if self._routers is None:
-                roles = "?"
-            else:
-                roles = ""
-                if machine in self._readers:
-                    roles += "r"
-                if machine in self._writers:
-                    roles += "w"
-            self.console_write("{:<12}{:<12}{:<12}{:<15}{:<8}{}".format(
-                spec.fq_name,
-                spec.bolt_port,
-                spec.http_port,
-                spec.config.get("dbms.mode", "SINGLE"),
-                roles,
-                machine.container.short_id,
-            ))
-
-    def console_ping(self):
-        """ Ping a server by name to check it is available. If no server name
-        is provided, 'a' is used as a default.
-        """
-        try:
-            name = self.console_args[1]
-        except IndexError:
-            name = "a"
-        found = 0
-        for spec, machine in list(self.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                machine.ping(timeout=0)
-                found += 1
-        if not found:
-            self.console_write("Machine {} not found".format(name))
-
-    def console_routing(self):
-        """ Fetch an updated routing table and display the contents. The
-        routing information is cached so that any subsequent `ls` can show
-        role information along with each server.
-        """
-        try:
-            self._update_routing_info()
-        except RuntimeError:
-            self.console_write("Cannot obtain routing information")
-        else:
-            self.console_write("Routers: «%s»" % AddressList(m.address for m in self._routers))
-            self.console_write("Readers: «%s»" % AddressList(m.address for m in self._readers))
-            self.console_write("Writers: «%s»" % AddressList(m.address for m in self._writers))
-            self.console_write("(TTL: %rs)" % self._ttl)
-
-    def console_logs(self):
-        """ Display logs for a named server. If no server name is provided,
-        'a' is used as a default.
-        """
-        try:
-            name = self.console_args[1]
-        except IndexError:
-            name = "a"
-        found = 0
-        for spec, machine in list(self.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                self.console_write(machine.container.logs())
-                found += 1
-        if not found:
-            self.console_write("Machine {} not found".format(name))
 
 
 class Neo4jStandaloneService(Neo4jService):
@@ -557,7 +420,7 @@ class Neo4jStandaloneService(Neo4jService):
             service_name=self.name,
             bolt_port=bolt_port or self.default_bolt_port,
             http_port=http_port or self.default_http_port,
-            dir_spec = dir_spec,
+            dir_spec=dir_spec,
             config=config,
         )
         self.machines[spec] = Neo4jMachine(
@@ -597,9 +460,12 @@ class Neo4jClusterService(Neo4jService):
         n_cores = n_cores or self.min_cores
         n_replicas = n_replicas or self.min_replicas
         if not self.min_cores <= n_cores <= self.max_cores:
-            raise ValueError("A cluster must have been {} and {} cores".format(self.min_cores, self.max_cores))
+            raise ValueError("A cluster must have been {} and {} "
+                             "cores".format(self.min_cores, self.max_cores))
         if not self.min_replicas <= n_replicas <= self.max_replicas:
-            raise ValueError("A cluster must have been {} and {} read replicas".format(self.min_replicas, self.max_replicas))
+            raise ValueError("A cluster must have been {} and {} "
+                             "read replicas".format(self.min_replicas,
+                                                    self.max_replicas))
 
         core_bolt_port_range = self._port_range(bolt_port or self.default_bolt_port, self.max_cores)
         core_http_port_range = self._port_range(http_port or self.default_http_port, self.max_cores)
@@ -666,15 +532,11 @@ class Neo4jClusterService(Neo4jService):
     def routers(self):
         return list(self.cores)
 
-    def _update_console_index(self):
-        super()._update_console_index()
-        self.console_index.update({
-            "add-core": self.console_add_core,
-            "add-replica": self.console_add_replica,
-            "rm": self.console_remove,
-        })
+    def run_console(self, read, write):
+        self.console = Neo4jClusterConsole(self, read, write)
+        self.console.run()
 
-    def console_add_core(self):
+    def add_core(self):
         """ Add new core server
         """
         if len(self.cores) < self.max_cores:
@@ -683,12 +545,11 @@ class Neo4jClusterService(Neo4jService):
             self._boot_machines()
             self.machines[spec].start()
             self.machines[spec].await_started(300)
-            self.console_write("Added core server %r" % spec.fq_name)
         else:
-            self.console_write("A maximum of {} cores "
+            raise RuntimeError("A maximum of {} cores "
                                "is permitted".format(self.max_cores))
 
-    def console_add_replica(self):
+    def add_replica(self):
         """ Add new replica server
         """
         if len(self.replicas) < self.max_replicas:
@@ -697,12 +558,11 @@ class Neo4jClusterService(Neo4jService):
             self._boot_machines()
             self.machines[spec].start()
             self.machines[spec].await_started(300)
-            self.console_write("Added replica server %r" % spec.fq_name)
         else:
-            self.console_write("A maximum of {} replicas "
+            raise RuntimeError("A maximum of {} replicas "
                                "is permitted".format(self.max_replicas))
 
-    def _stop_machine(self, spec):
+    def _remove_machine(self, spec):
         machine = self.machines[spec]
         del self.machines[spec]
         machine.stop()
@@ -711,24 +571,22 @@ class Neo4jClusterService(Neo4jService):
         elif isinstance(spec, Neo4jReplicaMachineSpec):
             self.free_replica_machine_specs.append(spec)
 
-    def console_remove(self):
+    def remove(self, name):
         """ Remove a server by name or role. Servers can be identified either
         by their name (e.g. 'a', 'a.fbe340d') or by the role they fulfil
         (e.g. 'r').
         """
-        name = self.console_args[1]
         found = 0
         for spec, machine in list(self.machines.items()):
             if (name == "r" and self._readers is not None and
                     machine in self._readers):
-                self._stop_machine(spec)
+                self._remove_machine(spec)
                 found += 1
             elif (name == "w" and self._writers is not None and
                   machine in self._writers):
-                self._stop_machine(spec)
+                self._remove_machine(spec)
                 found += 1
             elif name in (spec.name, spec.fq_name):
-                self._stop_machine(spec)
+                self._remove_machine(spec)
                 found += 1
-        if not found:
-            self.console_write("Machine {} not found".format(name))
+        return found

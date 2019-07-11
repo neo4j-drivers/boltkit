@@ -303,7 +303,7 @@ SERVER[1] = {
 SERVER[4] = SERVER[3] = SERVER[2] = SERVER[1]
 
 
-# TODO
+# This module logs entirely at debug level
 log = getLogger("boltkit")
 
 
@@ -395,7 +395,7 @@ class Connection:
         addresses.resolve()
         t0 = perf_counter()
         bolt_versions = cls.fix_bolt_versions(bolt_versions)
-        log.info("Trying to open connection to «%s»", addresses)
+        log.debug("Trying to open connection to «%s»", addresses)
         errors = set()
         again = True
         wait = 0.1
@@ -420,8 +420,8 @@ class Connection:
         self.socket = s
         self.address = AddressList([self.socket.getpeername()])
         self.bolt_version = bolt_version
-        log.info("Opened connection to «%s» using Bolt v%d",
-                 self.address, self.bolt_version)
+        log.debug("Opened connection to «%s» using Bolt v%d",
+                  self.address, self.bolt_version)
         self.requests = []
         self.responses = []
         try:
@@ -461,7 +461,7 @@ class Connection:
         self.close()
 
     def close(self):
-        log.info("Closing connection to «%s»", self.address)
+        log.debug("Closing connection to «%s»", self.address)
         self.socket.close()
 
     def reset(self):
