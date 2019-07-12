@@ -329,15 +329,7 @@ class Neo4jService:
 
     def start(self, timeout=None):
         log.info("Starting service %r with image %r", self.name, self.image)
-        i_pool = IPAMPool(
-            # TODO: make this configurable
-            subnet='172.20.0.0/16',
-            iprange='172.20.0.0/16',
-            gateway='172.20.0.254',
-            aux_addresses={},
-        )
-        i_config = IPAMConfig(pool_configs=[i_pool])
-        self.network = self.docker.networks.create(self.name, ipam=i_config)
+        self.network = self.docker.networks.create(self.name)
         self._for_each_machine(lambda machine: machine.start)
         if timeout is not None:
             self.await_started(timeout)
