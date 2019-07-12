@@ -24,13 +24,13 @@ from logging import getLogger
 from math import ceil
 from os import makedirs
 from os.path import join as path_join
+from random import choice
 from threading import Thread
 from time import sleep
 from uuid import uuid4
 
 from docker import DockerClient
 from docker.errors import ImageNotFound
-from docker.types import IPAMPool, IPAMConfig
 
 from boltkit.addressing import Address
 from boltkit.auth import make_auth
@@ -92,6 +92,10 @@ class Neo4jMachineSpec:
         "dbms.transaction.bookmark_ready_timeout": "5s",
     }
 
+    discovery_port = 5000
+    transaction_port = 6000
+    raft_port = 7000
+
     def __init__(self, name, service_name, bolt_port, http_port, dir_spec, config):
         self.name = name
         self.service_name = service_name
@@ -112,7 +116,15 @@ class Neo4jMachineSpec:
 
     @property
     def discovery_address(self):
-        return "{}.{}:5000".format(self.name, self.service_name)
+        return "{}:{}".format(self.fq_name, self.discovery_port)
+
+    @property
+    def transaction_address(self):
+        return "{}:{}".format(self.fq_name, self.transaction_port)
+
+    @property
+    def raft_address(self):
+        return "{}:{}".format(self.fq_name, self.raft_port)
 
     @property
     def http_uri(self):
@@ -262,11 +274,15 @@ class Neo4jService:
         else:
             return object.__new__(Neo4jStandaloneService)
 
+    @classmethod
+    def _random_name(cls):
+        return "".join(choice("bcdfghjklmnpqrstvwxz") for _ in range(7))
+
     def __init__(self, name=None, image=None, auth=None,
                  n_cores=None, n_replicas=None,
                  bolt_port=None, http_port=None,
                  dir_spec=None, config=None):
-        self.name = name or uuid4().hex[-7:]
+        self.name = name or self._random_name()
         self.docker = DockerClient.from_env(version="auto")
         self.image = resolve_image(image or self.default_image)
         self.auth = auth or make_auth()
@@ -516,6 +532,9 @@ class Neo4jClusterService(Neo4jService):
         for spec, machine in self.machines.items():
             if machine is None:
                 spec.config.update({
+                    "causal_clustering.discovery_listen_address": spec.discovery_address,
+                    "causal_clustering.transaction_listen_address": spec.transaction_address,
+                    "causal_clustering.raft_listen_address": spec.raft_address,
                     "causal_clustering.initial_discovery_members": ",".join(discovery_addresses),
                 })
                 self.machines[spec] = Neo4jMachine(spec, self.image, self.auth)
