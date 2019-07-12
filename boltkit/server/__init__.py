@@ -532,9 +532,6 @@ class Neo4jClusterService(Neo4jService):
         for spec, machine in self.machines.items():
             if machine is None:
                 spec.config.update({
-                    "causal_clustering.discovery_listen_address": spec.discovery_address,
-                    "causal_clustering.transaction_listen_address": spec.transaction_address,
-                    "causal_clustering.raft_listen_address": spec.raft_address,
                     "causal_clustering.initial_discovery_members": ",".join(discovery_addresses),
                 })
                 self.machines[spec] = Neo4jMachine(spec, self.image, self.auth)
