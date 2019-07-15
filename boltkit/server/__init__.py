@@ -410,6 +410,7 @@ class Neo4jService:
 
     def run_console(self, read, write):
         self.console = Neo4jConsole(self, read, write)
+        self.console.invoke("env")
         self.console.run()
 
     def env(self):

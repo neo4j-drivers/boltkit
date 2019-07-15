@@ -16,10 +16,12 @@
 # limitations under the License.
 
 
+from inspect import getmembers
 from logging import getLogger
 from shlex import split as shlex_split
-from textwrap import wrap
 from webbrowser import open as open_browser
+
+import click
 
 from boltkit.addressing import AddressList
 
@@ -35,82 +37,137 @@ class Neo4jConsole:
         self.service = service
         self.read = read
         self.write = write
-        self.index = {
-            "browser": self.browser,
-            "env": self.env,
-            "exit": self.exit,
-            "help": self.help,
-            "logs": self.logs,
-            "ls": self.list,
-            "ping": self.ping,
-            "rt": self.routing_table,
-        }
+
+    def __iter__(self):
+        for name, value in getmembers(self):
+            if isinstance(value, click.Command):
+                yield name
+
+    def __getitem__(self, name):
+        try:
+            f = getattr(self, name)
+        except AttributeError:
+            raise click.UsageError('No such command "%s".' % name)
+        else:
+            if isinstance(f, click.Command):
+                return f
+            else:
+                raise click.UsageError('No such command "%s".' % name)
+
+    def _iter_machines(self, name):
+        if not name:
+            name = "a"
+        for spec in list(self.service.machines):
+            if name in (spec.name, spec.fq_name):
+                yield self.service.machines[spec]
+
+    def _for_each_machine(self, name, f):
+        found = 0
+        for machine_obj in self._iter_machines(name):
+            f(machine_obj)
+            found += 1
+        return found
 
     def run(self):
-        self.env()
         while True:
             self.args = shlex_split(self.read(self.service.name))
-            command = self.args[0]
-            try:
-                f = self.index[command]
-            except KeyError:
-                self.write("Unknown command {!r}".format(command))
-            else:
-                try:
-                    f()
-                except RuntimeError as e:
-                    log.error(e.args[0])
+            self.invoke(*self.args)
 
-    def browser(self):
-        """ Start the Neo4j browser application for a named machine.
-        """
+    def invoke(self, *args):
         try:
-            name = self.args[1]
-        except IndexError:
-            name = "a"
-        found = 0
-        for spec, machine in list(self.service.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                self.write("Opening web browser for machine {!r} at "
-                           "«{}»".format(spec.fq_name, spec.http_uri))
-                open_browser(spec.http_uri)
-                found += 1
-        if not found:
-            raise RuntimeError("Machine {} not found".format(name))
+            arg0, args = args[0], list(args[1:])
+            f = self[arg0]
+            ctx = f.make_context(arg0, args, obj=self)
+            return f.invoke(ctx)
+        except click.exceptions.Exit:
+            pass
+        except click.ClickException as e:
+            self.write(e.format_message())
+        except RuntimeError as e:
+            log.error("{}: {}".format(e.__class__.__name__, e.args[0]))
 
+    @click.command()
+    @click.argument("machine", required=False)
+    @click.pass_obj
+    def browser(self, machine):
+        """ Start the Neo4j browser.
+
+        A machine name may optionally be passed, which denotes the server to
+        which the browser should be tied. If no machine name is given, 'a' is
+        assumed.
+        """
+
+        def f(m):
+            self.write("Opening web browser for machine {!r} at "
+                       "«{}»".format(m.spec.fq_name, m.spec.http_uri))
+            open_browser(m.spec.http_uri)
+
+        if not self._for_each_machine(machine, f):
+            raise RuntimeError("Machine {} not found".format(machine))
+
+    @click.command()
+    @click.pass_obj
     def env(self):
-        """ List the environment variables made available by this service.
+        """ Show available environment variables.
+
+        Each service exposes several environment variables which contain
+        information relevant to that service. These are:
+
+          BOLT_SERVER_ADDR   space-separated string of router addresses
+          NEO4J_AUTH         colon-separated user and password
+
         """
         for key, value in sorted(self.service.env().items()):
             self.write("%s=%r" % (key, value))
 
+    @click.command()
+    @click.pass_obj
     def exit(self):
         """ Shutdown all machines and exit the console.
         """
         raise SystemExit()
 
-    def help(self):
-        """ Show descriptions of all available console commands.
+    @click.command()
+    @click.argument("command", required=False)
+    @click.pass_obj
+    def help(self, command):
+        """ Get help on a command or show all available commands.
         """
-        self.write("Commands:")
-        command_width = max(map(len, self.index))
-        text_width = 73 - command_width
-        template = "  {:<%d}   {}" % command_width
-        for command, f in sorted(self.index.items()):
-            text = " ".join(line.strip() for line in f.__doc__.splitlines())
-            wrapped_text = wrap(text, text_width)
-            for i, line in enumerate(wrapped_text):
-                if i == 0:
-                    self.write(template.format(command, line))
-                else:
-                    self.write(template.format("", line))
+        if command:
+            try:
+                f = self[command]
+            except KeyError:
+                raise RuntimeError('No such command "%s".' % command)
+            else:
+                ctx = self.help.make_context(command, [], obj=self)
+                self.write(f.get_help(ctx))
+        else:
+            self.write("Commands:")
+            command_width = max(map(len, self))
+            text_width = 73 - command_width
+            template = "  {:<%d}   {}" % command_width
+            for arg0 in sorted(self):
+                f = self[arg0]
+                text = [f.get_short_help_str(limit=text_width)]
+                for i, line in enumerate(text):
+                    if i == 0:
+                        self.write(template.format(arg0, line))
+                    else:
+                        self.write(template.format("", line))
 
-    def list(self):
-        """ Show a detailed list of the available servers. Each server is
-        listed by name, along with the ports open for Bolt and HTTP traffic,
-        the mode in which that server is operating -- CORE, READ_REPLICA or
-        SINGLE -- the roles it can fulfil -- (r)ead or (w)rite -- and the
-        Docker container in which it runs.
+    @click.command()
+    @click.pass_obj
+    def ls(self):
+        """ Show a detailed list of the available servers.
+
+        Each server is listed by name, along with the following details:
+
+        - Bolt port
+        - HTTP port
+        - Server mode -- CORE, READ_REPLICA or SINGLE
+        - Roles the server can fulfil -- (r)ead or (w)rite
+        - Docker container in which the server is running
+
         """
         self.write("NAME        BOLT PORT   HTTP PORT   "
                    "MODE           ROLES   CONTAINER")
@@ -129,25 +186,26 @@ class Neo4jConsole:
                 machine.container.short_id,
             ))
 
-    def ping(self):
+    @click.command()
+    @click.argument("machine", required=False)
+    @click.pass_obj
+    def ping(self, machine):
         """ Ping a server by name to check it is available. If no server name
         is provided, 'a' is used as a default.
         """
-        try:
-            name = self.args[1]
-        except IndexError:
-            name = "a"
-        found = 0
-        for spec, machine in list(self.service.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                machine.ping(timeout=0)
-                found += 1
-        if not found:
-            raise RuntimeError("Machine {} not found".format(name))
 
-    def routing_table(self):
-        """ Fetch an updated routing table and display the contents. The
-        routing information is cached so that any subsequent `ls` can show
+        def f(m):
+            self.write(m.ping(timeout=0))
+
+        if not self._for_each_machine(machine, f):
+            raise RuntimeError("Machine {} not found".format(machine))
+
+    @click.command()
+    @click.pass_obj
+    def rt(self):
+        """ Fetch an updated routing table and display the contents.
+
+        The routing information is cached so that any subsequent `ls` can show
         role information along with each server.
         """
         self.service.update_routing_info()
@@ -156,49 +214,53 @@ class Neo4jConsole:
         self.write("Writers: «%s»" % AddressList(m.address for m in self.service.writers))
         self.write("(TTL: %rs)" % self.service.ttl)
 
-    def logs(self):
-        """ Display logs for a named server. If no server name is provided,
-        'a' is used as a default.
+    @click.command()
+    @click.argument("machine", required=False)
+    @click.pass_obj
+    def logs(self, machine):
+        """ Display logs for a named server.
+
+        If no server name is provided, 'a' is used as a default.
         """
-        try:
-            name = self.args[1]
-        except IndexError:
-            name = "a"
-        found = 0
-        for spec, machine in list(self.service.machines.items()):
-            if name in (spec.name, spec.fq_name):
-                self.write(machine.container.logs())
-                found += 1
-        if not found:
-            raise RuntimeError("Machine {} not found".format(name))
+
+        def f(m):
+            self.write(m.container.logs())
+
+        if not self._for_each_machine(machine, f):
+            raise RuntimeError("Machine {} not found".format(machine))
 
 
 class Neo4jClusterConsole(Neo4jConsole):
 
-    def __init__(self, service, read, write):
-        super().__init__(service, read, write)
-        self.index.update({
-            "add-core": self.add_core,
-            "add-replica": self.add_replica,
-            "rm": self.remove,
-        })
+    @click.command()
+    @click.argument("mode")
+    @click.pass_obj
+    def add(self, mode):
+        """ Add a new server by mode.
 
-    def add_core(self):
-        """ Add new core server
-        """
-        self.service.add_core()
+        The new server can be added in either "core" or "read-replica" mode.
+        The full set of MODE values available are:
 
-    def add_replica(self):
-        """ Add new replica server
-        """
-        self.service.add_replica()
+        - c, core
+        - r, rr, replica, read-replica, read_replica
 
-    def remove(self):
-        """ Remove a server by name or role. Servers can be identified either
-        by their name (e.g. 'a', 'a.fbe340d') or by the role they fulfil
-        (e.g. 'r').
         """
-        name = self.args[1]
-        found = self.service.remove(name)
-        if not found:
-            raise RuntimeError("Machine {} not found".format(name))
+        if mode in ("c", "core"):
+            self.service.add_core()
+        elif mode == ("r", "rr", "replica", "read-replica", "read_replica"):
+            self.service.add_replica()
+        else:
+            raise click.UsageError('Invalid value for "MODE", choose from '
+                                   '"core" or "read-replica"'.format(mode))
+
+    @click.command()
+    @click.argument("machine")
+    @click.pass_obj
+    def rm(self, machine):
+        """ Remove a server by name or role.
+
+        Servers can be identified either by their name (e.g. 'a', 'a.fbe340d')
+        or by the role they fulfil (i.e. 'r' or 'w').
+        """
+        if not self.service.remove(machine):
+            raise RuntimeError("Machine {} not found".format(machine))
