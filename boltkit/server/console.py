@@ -19,6 +19,7 @@
 from inspect import getmembers
 from logging import getLogger
 from shlex import split as shlex_split
+from time import sleep
 from webbrowser import open as open_browser
 
 import click
@@ -103,7 +104,7 @@ class Neo4jConsole:
             open_browser(m.spec.http_uri)
 
         if not self._for_each_machine(machine, f):
-            raise RuntimeError("Machine {} not found".format(machine))
+            raise RuntimeError("Machine {!r} not found".format(machine))
 
     @click.command()
     @click.pass_obj
@@ -195,10 +196,10 @@ class Neo4jConsole:
         """
 
         def f(m):
-            self.write(m.ping(timeout=0))
+            m.ping(timeout=0)
 
         if not self._for_each_machine(machine, f):
-            raise RuntimeError("Machine {} not found".format(machine))
+            raise RuntimeError("Machine {!r} not found".format(machine))
 
     @click.command()
     @click.pass_obj
@@ -209,10 +210,13 @@ class Neo4jConsole:
         role information along with each server.
         """
         self.service.update_routing_info()
-        self.write("Routers: «%s»" % AddressList(m.address for m in self.service.routers))
-        self.write("Readers: «%s»" % AddressList(m.address for m in self.service.readers))
-        self.write("Writers: «%s»" % AddressList(m.address for m in self.service.writers))
-        self.write("(TTL: %rs)" % self.service.ttl)
+        self.write(click.style("Routers: «%s»" % AddressList(
+            m.address for m in self.service.routers), fg="green"))
+        self.write(click.style("Readers: «%s»" % AddressList(
+            m.address for m in self.service.readers), fg="green"))
+        self.write(click.style("Writers: «%s»" % AddressList(
+            m.address for m in self.service.writers), fg="green"))
+        self.write(click.style("(TTL: %rs)" % self.service.ttl, fg="green"))
 
     @click.command()
     @click.argument("machine", required=False)
@@ -227,7 +231,28 @@ class Neo4jConsole:
             self.write(m.container.logs())
 
         if not self._for_each_machine(machine, f):
-            raise RuntimeError("Machine {} not found".format(machine))
+            raise RuntimeError("Machine {!r} not found".format(machine))
+
+    @click.command()
+    @click.argument("time", type=float)
+    @click.argument("machine", required=False)
+    @click.pass_obj
+    def pause(self, time, machine):
+        """ Pause a server for a given number of seconds.
+
+        If no server name is provided, 'a' is used as a default.
+        """
+
+        def f(m):
+            log.info("Pausing machine {!r} for {}s".format(m.spec.fq_name,
+                                                           time))
+            m.container.pause()
+            sleep(time)
+            m.container.unpause()
+            m.ping(timeout=0)
+
+        if not self._for_each_machine(machine, f):
+            raise RuntimeError("Machine {!r} not found".format(machine))
 
 
 class Neo4jClusterConsole(Neo4jConsole):
@@ -263,4 +288,4 @@ class Neo4jClusterConsole(Neo4jConsole):
         or by the role they fulfil (i.e. 'r' or 'w').
         """
         if not self.service.remove(machine):
-            raise RuntimeError("Machine {} not found".format(machine))
+            raise RuntimeError("Machine {!r} not found".format(machine))

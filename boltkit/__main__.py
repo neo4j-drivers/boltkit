@@ -309,7 +309,6 @@ def server(command, name, image, auth, n_cores, n_replicas,
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        raise
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
