@@ -202,14 +202,15 @@ class Neo4jConsole:
             raise RuntimeError("Machine {!r} not found".format(machine))
 
     @click.command()
+    @click.argument("context", required=False)
     @click.pass_obj
-    def rt(self):
+    def rt(self, context):
         """ Fetch an updated routing table and display the contents.
 
         The routing information is cached so that any subsequent `ls` can show
         role information along with each server.
         """
-        self.service.update_routing_info()
+        self.service.update_routing_info(context)
         self.write(click.style("Routers: «%s»" % AddressList(
             m.address for m in self.service.routers), fg="green"))
         self.write(click.style("Readers: «%s»" % AddressList(

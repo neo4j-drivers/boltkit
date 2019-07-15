@@ -380,16 +380,26 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
-    def update_routing_info(self):
+    def update_routing_info(self, transaction_context):
         with Connection.open(*self.addresses, auth=self.auth) as cx:
+            routing_context = {}
             records = []
-            cx.run("CALL dbms.cluster.routing.getRoutingTable($context)",
-                   {"context": {}})
+            if cx.bolt_version >= 4:
+                run = cx.run("CALL dbms.cluster.routing."
+                             "getRoutingTable($rc, $tc)", {
+                                 "rc": routing_context,
+                                 "tc": transaction_context,
+                             })
+            else:
+                run = cx.run("CALL dbms.cluster.routing."
+                             "getRoutingTable($rc)", {
+                                 "rc": routing_context,
+                             })
             cx.pull(-1, -1, records)
             cx.send_all()
             cx.fetch_all()
-            if not records:
-                raise RuntimeError("Unable to obtain routing information")
+            if run.error:
+                raise run.error
             ttl, server_lists = records[0]
             routers = AddressList()
             readers = AddressList()

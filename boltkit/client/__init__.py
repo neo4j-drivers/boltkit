@@ -627,6 +627,7 @@ class Response:
         self.connection = connection
         self.metadata = {}
         self.complete = False
+        self.error = None
 
     @property
     def bolt_version(self):
@@ -640,6 +641,8 @@ class Response:
     def on_failure(self, data):
         log.debug("S: FAILURE %r", data)
         self.metadata.update(data)
+        error_cls = type(self.metadata.get("code"), (RuntimeError,), {})
+        self.error = error_cls(self.metadata.get("message"))
         self.complete = True
         self.connection.close()
 
@@ -674,6 +677,8 @@ class QueryResponse(Response):
     def on_failure(self, data):
         log.debug("S: FAILURE %r", data)
         self.metadata.update(data)
+        error_cls = type(self.metadata.get("code"), (RuntimeError,), {})
+        self.error = error_cls(self.metadata.get("message"))
         self.complete = True
         self.connection.reset()
 
