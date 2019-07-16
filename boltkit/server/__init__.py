@@ -283,6 +283,17 @@ class Neo4jRoutingTable:
         age = monotonic() - self.last_updated
         return age >= self.ttl
 
+    def age(self):
+        age = monotonic() - self.last_updated
+        m, s = divmod(age, 60)
+        parts = []
+        if m:
+            parts.append("{:.0f}m".format(m))
+        parts.append("{:.0f}s".format(s))
+        if age >= self.ttl:
+            parts.append("(expired)")
+        return " ".join(parts)
+
 
 class Neo4jService:
     """ A Neo4j database management service.
@@ -324,7 +335,7 @@ class Neo4jService:
             raise ValueError("Auth user must be 'neo4j' or empty")
         self.machines = {}
         self.network = None
-        self.routing_table = Neo4jRoutingTable()
+        self.routing_tables = {"system": Neo4jRoutingTable()}
         self.console = None
 
     def __enter__(self):
@@ -339,27 +350,33 @@ class Neo4jService:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-    def _get_machine(self, address):
+    def _get_machine_by_address(self, address):
         address = Address((address.host, address.port_number))
         for spec, machine in self.machines.items():
             if spec.bolt_address == address:
                 return machine
 
     def routers(self):
-        if self.routing_table.routers:
-            return list(map(self._get_machine, self.routing_table.routers))
+        if self.routing_tables["system"].routers:
+            return list(map(self._get_machine_by_address,
+                            self.routing_tables["system"].routers))
         else:
             return list(self.machines.values())
 
-    def readers(self):
-        return list(map(self._get_machine, self.routing_table.readers))
+    def readers(self, tx_context):
+        return list(map(self._get_machine_by_address,
+                        self.routing_tables[tx_context].readers))
 
-    def writers(self):
-        return list(map(self._get_machine, self.routing_table.writers))
+    def writers(self, tx_context):
+        return list(map(self._get_machine_by_address,
+                        self.routing_tables[tx_context].writers))
 
-    @property
-    def ttl(self):
-        return self.routing_table.ttl
+    def ttl(self, context):
+        return self.routing_tables[context].ttl
+
+    def _has_valid_routing_table(self, tx_context):
+        return (tx_context in self.routing_tables and
+                not self.routing_tables[tx_context].expired())
 
     def _for_each_machine(self, f):
         threads = []
@@ -408,7 +425,9 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
-    def update_routing_info(self, tx_context):
+    def update_routing_info(self, tx_context, force):
+        if self._has_valid_routing_table(tx_context) and not force:
+            return
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             routing_context = {}
             records = []
@@ -428,8 +447,14 @@ class Neo4jService:
             cx.fetch_all()
             if run.error:
                 raise run.error
-            ttl, server_lists = records[0]
-            self.routing_table.update(server_lists, ttl)
+            if records:
+                ttl, server_lists = records[0]
+                routing_table = self.routing_tables.setdefault(tx_context,
+                                                               Neo4jRoutingTable())
+                routing_table.update(server_lists, ttl)
+            else:
+                raise RuntimeError("No routing data available for "
+                                   "context {!r}".format(tx_context))
 
     def run_console(self, read, write):
         self.console = Neo4jConsole(self, read, write)
@@ -569,8 +594,9 @@ class Neo4jClusterService(Neo4jService):
                 if isinstance(spec, Neo4jReplicaMachineSpec)]
 
     def routers(self):
-        if self.routing_table.routers:
-            return list(map(self._get_machine, self.routing_table.routers))
+        if self.routing_tables["system"].routers:
+            return list(map(self._get_machine_by_address,
+                            self.routing_tables["system"].routers))
         else:
             return list(self.cores())
 

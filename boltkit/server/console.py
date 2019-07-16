@@ -26,6 +26,10 @@ import click
 
 from boltkit.addressing import AddressList
 
+# Imported to allow console history, etc
+# DO NOT REMOVE!!
+import readline
+
 
 log = getLogger("boltkit")
 
@@ -71,14 +75,24 @@ class Neo4jConsole:
             found += 1
         return found
 
-    def prompt_text(self):
-        return click.style("{}:{}> ".format(self.service.name,
-                                            self.tx_context), fg="green")
+    def prompt(self):
+        # We don't use click.prompt functionality here as that doesn't play
+        # nicely with readline. Instead, we use click.echo for the main prompt
+        # text and a raw input call to read from stdin.
+        text = "".join([
+            click.style(self.tx_context, fg="cyan"),
+            click.style(">", fg="bright_black"),
+        ])
+        prompt_suffix = " "
+        click.echo(text, nl=False)
+        return input(prompt_suffix)
 
     def run(self):
         while True:
-            self.args = shlex_split(self.read(self.prompt_text()))
-            self.invoke(*self.args)
+            text = self.prompt()
+            if text:
+                self.args = shlex_split(text)
+                self.invoke(*self.args)
 
     def invoke(self, *args):
         try:
@@ -91,7 +105,7 @@ class Neo4jConsole:
         except click.ClickException as e:
             self.write(e.format_message())
         except RuntimeError as e:
-            log.error("{}: {}".format(e.__class__.__name__, e.args[0]))
+            log.error("{}".format(e.args[0]))
 
     @click.command()
     @click.argument("machine", required=False)
@@ -183,15 +197,14 @@ class Neo4jConsole:
         - Docker container in which the server is running
 
         """
-        if refresh or self.service.routing_table.expired():
-            self.service.update_routing_info(self.tx_context)
+        self.service.update_routing_info(self.tx_context, force=refresh)
         self.write("NAME        BOLT PORT   HTTP PORT   "
                    "MODE           ROUTER   ROLES   CONTAINER")
         for spec, machine in self.service.machines.items():
             roles = ""
-            if machine in self.service.readers():
+            if machine in self.service.readers(self.tx_context):
                 roles += "r"
-            if machine in self.service.writers():
+            if machine in self.service.writers(self.tx_context):
                 roles += "w"
             self.write("{:<12}{:<12}{:<12}{:<15}{:<9}{:<8}{}".format(
                 spec.fq_name,
@@ -202,7 +215,6 @@ class Neo4jConsole:
                 roles,
                 machine.container.short_id,
             ))
-        self.write("(Transaction Context: {})".format(self.tx_context))
 
     @click.command()
     @click.argument("machine", required=False)
@@ -219,21 +231,25 @@ class Neo4jConsole:
             raise RuntimeError("Machine {!r} not found".format(machine))
 
     @click.command()
+    @click.option("-r", "--refresh", is_flag=True,
+                  help="Refresh the routing table")
     @click.pass_obj
-    def rt(self):
-        """ Fetch an updated routing table and display the contents.
+    def rt(self, refresh):
+        """ Display the routing table.
 
         The routing information is cached so that any subsequent `ls` can show
         role information along with each server.
         """
-        self.service.update_routing_info(self.tx_context)
+        self.service.update_routing_info(self.tx_context, force=refresh)
         self.write("Routers: «%s»" % AddressList(
             m.address for m in self.service.routers()))
         self.write("Readers: «%s»" % AddressList(
-            m.address for m in self.service.readers()))
+            m.address for m in self.service.readers(self.tx_context)))
         self.write("Writers: «%s»" % AddressList(
-            m.address for m in self.service.writers()))
-        self.write("(TTL: %rs)" % self.service.ttl)
+            m.address for m in self.service.writers(self.tx_context)))
+        self.write("(TTL: {!r}s, age: {})".format(
+            self.service.ttl(self.tx_context),
+            self.service.routing_tables[self.tx_context].age()))
 
     @click.command()
     @click.argument("machine", required=False)
@@ -297,7 +313,7 @@ class Neo4jClusterConsole(Neo4jConsole):
         """
         if mode in ("c", "core"):
             self.service.add_core()
-        elif mode == ("r", "rr", "replica", "read-replica", "read_replica"):
+        elif mode in ("r", "rr", "replica", "read-replica", "read_replica"):
             self.service.add_replica()
         else:
             raise click.UsageError('Invalid value for "MODE", choose from '
