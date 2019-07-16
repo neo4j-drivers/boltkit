@@ -303,13 +303,12 @@ def server(command, name, image, auth, n_cores, n_replicas,
                     env=neo4j.env())
             else:
                 neo4j.run_console(
-                    read=lambda t: click.prompt(t, prompt_suffix="> "),
+                    read=lambda t: click.prompt(t, prompt_suffix=""),
                     write=click.echo,
                 )
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        raise
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 

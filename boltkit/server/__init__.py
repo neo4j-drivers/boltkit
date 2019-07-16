@@ -26,8 +26,7 @@ from os import makedirs
 from os.path import join as path_join
 from random import choice
 from threading import Thread
-from time import sleep
-from uuid import uuid4
+from time import monotonic, sleep
 
 from docker import DockerClient
 from docker.errors import ImageNotFound
@@ -250,6 +249,41 @@ class Neo4jMachine:
         self.container.remove(force=True)
 
 
+class Neo4jRoutingTable:
+    """ Address lists for a Neo4j service.
+    """
+
+    def __init__(self, routers=()):
+        self.routers = AddressList(routers)
+        self.readers = AddressList()
+        self.writers = AddressList()
+        self.last_updated = 0
+        self.ttl = 0
+
+    def update(self, server_lists, ttl):
+        new_routers = AddressList()
+        new_readers = AddressList()
+        new_writers = AddressList()
+        for server_list in server_lists:
+            role = server_list["role"]
+            addresses = map(Address.parse, server_list["addresses"])
+            if role == "ROUTE":
+                new_routers[:] = addresses
+            elif role == "READ":
+                new_readers[:] = addresses
+            elif role == "WRITE":
+                new_writers[:] = addresses
+        self.routers[:] = new_routers
+        self.readers[:] = new_readers
+        self.writers[:] = new_writers
+        self.last_updated = monotonic()
+        self.ttl = ttl
+
+    def expired(self):
+        age = monotonic() - self.last_updated
+        return age >= self.ttl
+
+
 class Neo4jService:
     """ A Neo4j database management service.
     """
@@ -290,10 +324,7 @@ class Neo4jService:
             raise ValueError("Auth user must be 'neo4j' or empty")
         self.machines = {}
         self.network = None
-        self._routers = ()
-        self._readers = ()
-        self._writers = ()
-        self._ttl = 0
+        self.routing_table = Neo4jRoutingTable()
         self.console = None
 
     def __enter__(self):
@@ -308,30 +339,27 @@ class Neo4jService:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-    def _get_machine_by_address(self, address):
+    def _get_machine(self, address):
         address = Address((address.host, address.port_number))
         for spec, machine in self.machines.items():
             if spec.bolt_address == address:
                 return machine
 
-    @property
     def routers(self):
-        if self._routers:
-            return list(self._routers)
+        if self.routing_table.routers:
+            return list(map(self._get_machine, self.routing_table.routers))
         else:
             return list(self.machines.values())
 
-    @property
     def readers(self):
-        return list(self._readers)
+        return list(map(self._get_machine, self.routing_table.readers))
 
-    @property
     def writers(self):
-        return list(self._writers)
+        return list(map(self._get_machine, self.routing_table.writers))
 
     @property
     def ttl(self):
-        return self._ttl
+        return self.routing_table.ttl
 
     def _for_each_machine(self, f):
         threads = []
@@ -369,7 +397,7 @@ class Neo4jService:
 
     @property
     def addresses(self):
-        return AddressList(chain(*(r.addresses for r in self.routers)))
+        return AddressList(chain(*(r.addresses for r in self.routers())))
 
     @classmethod
     def find_and_stop(cls, service_name):
@@ -380,7 +408,7 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
-    def update_routing_info(self, transaction_context):
+    def update_routing_info(self, tx_context):
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             routing_context = {}
             records = []
@@ -388,7 +416,7 @@ class Neo4jService:
                 run = cx.run("CALL dbms.cluster.routing."
                              "getRoutingTable($rc, $tc)", {
                                  "rc": routing_context,
-                                 "tc": transaction_context,
+                                 "tc": tx_context,
                              })
             else:
                 run = cx.run("CALL dbms.cluster.routing."
@@ -401,22 +429,7 @@ class Neo4jService:
             if run.error:
                 raise run.error
             ttl, server_lists = records[0]
-            routers = AddressList()
-            readers = AddressList()
-            writers = AddressList()
-            for server_list in server_lists:
-                role = server_list["role"]
-                addresses = map(Address.parse, server_list["addresses"])
-                if role == "ROUTE":
-                    routers[:] = addresses
-                elif role == "READ":
-                    readers[:] = addresses
-                elif role == "WRITE":
-                    writers[:] = addresses
-            self._routers = [self._get_machine_by_address(a) for a in routers]
-            self._readers = [self._get_machine_by_address(a) for a in readers]
-            self._writers = [self._get_machine_by_address(a) for a in writers]
-            self._ttl = ttl
+            self.routing_table.update(server_lists, ttl)
 
     def run_console(self, read, write):
         self.console = Neo4jConsole(self, read, write)
@@ -424,7 +437,7 @@ class Neo4jService:
         self.console.run()
 
     def env(self):
-        addr = AddressList(chain(*(r.addresses for r in self.routers)))
+        addr = AddressList(chain(*(r.addresses for r in self.routers())))
         auth = "{}:{}".format(self.auth.user, self.auth.password)
         return {
             "BOLT_SERVER_ADDR": str(addr),
@@ -547,19 +560,19 @@ class Neo4jClusterService(Neo4jService):
                 })
                 self.machines[spec] = Neo4jMachine(spec, self.image, self.auth)
 
-    @property
     def cores(self):
         return [machine for spec, machine in self.machines.items()
                 if isinstance(spec, Neo4jCoreMachineSpec)]
 
-    @property
     def replicas(self):
         return [machine for spec, machine in self.machines.items()
                 if isinstance(spec, Neo4jReplicaMachineSpec)]
 
-    @property
     def routers(self):
-        return list(self.cores)
+        if self.routing_table.routers:
+            return list(map(self._get_machine, self.routing_table.routers))
+        else:
+            return list(self.cores())
 
     def run_console(self, read, write):
         self.console = Neo4jClusterConsole(self, read, write)
@@ -568,7 +581,7 @@ class Neo4jClusterService(Neo4jService):
     def add_core(self):
         """ Add new core server
         """
-        if len(self.cores) < self.max_cores:
+        if len(self.cores()) < self.max_cores:
             spec = self.free_core_machine_specs.pop(0)
             self.machines[spec] = None
             self._boot_machines()
@@ -581,7 +594,7 @@ class Neo4jClusterService(Neo4jService):
     def add_replica(self):
         """ Add new replica server
         """
-        if len(self.replicas) < self.max_replicas:
+        if len(self.replicas()) < self.max_replicas:
             spec = self.free_replica_machine_specs.pop(0)
             self.machines[spec] = None
             self._boot_machines()
@@ -607,12 +620,12 @@ class Neo4jClusterService(Neo4jService):
         """
         found = 0
         for spec, machine in list(self.machines.items()):
-            if (name == "r" and self._readers is not None and
-                    machine in self._readers):
+            if (name == "r" and self.readers is not None and
+                    machine in self.readers):
                 self._remove_machine(spec)
                 found += 1
-            elif (name == "w" and self._writers is not None and
-                  machine in self._writers):
+            elif (name == "w" and self.writers is not None and
+                  machine in self.writers):
                 self._remove_machine(spec)
                 found += 1
             elif name in (spec.name, spec.fq_name):

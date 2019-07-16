@@ -34,6 +34,8 @@ class Neo4jConsole:
 
     args = None
 
+    tx_context = "system"
+
     def __init__(self, service, read, write):
         self.service = service
         self.read = read
@@ -69,9 +71,13 @@ class Neo4jConsole:
             found += 1
         return found
 
+    def prompt_text(self):
+        return click.style("{}:{}> ".format(self.service.name,
+                                            self.tx_context), fg="green")
+
     def run(self):
         while True:
-            self.args = shlex_split(self.read(self.service.name))
+            self.args = shlex_split(self.read(self.prompt_text()))
             self.invoke(*self.args)
 
     def invoke(self, *args):
@@ -157,35 +163,46 @@ class Neo4jConsole:
                         self.write(template.format("", line))
 
     @click.command()
+    @click.option("-r", "--refresh", is_flag=True,
+                  help="Refresh the routing table")
     @click.pass_obj
-    def ls(self):
+    def ls(self, refresh):
         """ Show a detailed list of the available servers.
 
-        Each server is listed by name, along with the following details:
+        Routing information for the current transaction context is refreshed
+        automatically if expired, or can be manually refreshed with the -r
+        option. Each server is listed by name, along with the following
+        details:
 
+        \b
         - Bolt port
         - HTTP port
-        - Server mode -- CORE, READ_REPLICA or SINGLE
-        - Roles the server can fulfil -- (r)ead or (w)rite
+        - Server mode: CORE, READ_REPLICA or SINGLE
+        - Whether or not the server is a router
+        - Roles for the current tx context: (r)ead or (w)rite
         - Docker container in which the server is running
 
         """
+        if refresh or self.service.routing_table.expired():
+            self.service.update_routing_info(self.tx_context)
         self.write("NAME        BOLT PORT   HTTP PORT   "
-                   "MODE           ROLES   CONTAINER")
+                   "MODE           ROUTER   ROLES   CONTAINER")
         for spec, machine in self.service.machines.items():
             roles = ""
-            if machine in self.service.readers:
+            if machine in self.service.readers():
                 roles += "r"
-            if machine in self.service.writers:
+            if machine in self.service.writers():
                 roles += "w"
-            self.write("{:<12}{:<12}{:<12}{:<15}{:<8}{}".format(
+            self.write("{:<12}{:<12}{:<12}{:<15}{:<9}{:<8}{}".format(
                 spec.fq_name,
                 spec.bolt_port,
                 spec.http_port,
                 spec.config.get("dbms.mode", "SINGLE"),
+                "✓" if machine in self.service.routers() else "",
                 roles,
                 machine.container.short_id,
             ))
+        self.write("(Transaction Context: {})".format(self.tx_context))
 
     @click.command()
     @click.argument("machine", required=False)
@@ -202,22 +219,21 @@ class Neo4jConsole:
             raise RuntimeError("Machine {!r} not found".format(machine))
 
     @click.command()
-    @click.argument("context", required=False)
     @click.pass_obj
-    def rt(self, context):
+    def rt(self):
         """ Fetch an updated routing table and display the contents.
 
         The routing information is cached so that any subsequent `ls` can show
         role information along with each server.
         """
-        self.service.update_routing_info(context)
-        self.write(click.style("Routers: «%s»" % AddressList(
-            m.address for m in self.service.routers), fg="green"))
-        self.write(click.style("Readers: «%s»" % AddressList(
-            m.address for m in self.service.readers), fg="green"))
-        self.write(click.style("Writers: «%s»" % AddressList(
-            m.address for m in self.service.writers), fg="green"))
-        self.write(click.style("(TTL: %rs)" % self.service.ttl, fg="green"))
+        self.service.update_routing_info(self.tx_context)
+        self.write("Routers: «%s»" % AddressList(
+            m.address for m in self.service.routers()))
+        self.write("Readers: «%s»" % AddressList(
+            m.address for m in self.service.readers()))
+        self.write("Writers: «%s»" % AddressList(
+            m.address for m in self.service.writers()))
+        self.write("(TTL: %rs)" % self.service.ttl)
 
     @click.command()
     @click.argument("machine", required=False)
@@ -254,6 +270,14 @@ class Neo4jConsole:
 
         if not self._for_each_machine(machine, f):
             raise RuntimeError("Machine {!r} not found".format(machine))
+
+    @click.command()
+    @click.argument("context")
+    @click.pass_obj
+    def use(self, context):
+        """ Select a transaction context for Cypher execution.
+        """
+        self.tx_context = context
 
 
 class Neo4jClusterConsole(Neo4jConsole):
