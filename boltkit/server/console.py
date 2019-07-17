@@ -291,7 +291,7 @@ class Neo4jConsole:
     @click.argument("context")
     @click.pass_obj
     def use(self, context):
-        """ Select a transaction context for Cypher execution.
+        """ Select a database context.
         """
         self.tx_context = context
 
