@@ -95,14 +95,16 @@ class Neo4jMachineSpec:
     transaction_port = 6000
     raft_port = 7000
 
-    def __init__(self, name, service_name, bolt_port, http_port, dir_spec, config):
+    def __init__(self, name, service_name, bolt_port, http_port,
+                 dir_spec, config):
         self.name = name
         self.service_name = service_name
         self.bolt_port = bolt_port
         self.http_port = http_port
         self.dir_spec = dir_spec
         self.config = dict(self.config or {})
-        self.config["dbms.connector.bolt.advertised_address"] = "localhost:{}".format(self.bolt_port)
+        self.config["dbms.connector.bolt.advertised_address"] = \
+            "localhost:{}".format(self.bolt_port)
         if config:
             self.config.update(**config)
 
@@ -136,18 +138,22 @@ class Neo4jMachineSpec:
 
 class Neo4jCoreMachineSpec(Neo4jMachineSpec):
 
-    def __init__(self, name, service_name, bolt_port, http_port, dir_spec, config):
+    def __init__(self, name, service_name, bolt_port, http_port,
+                 dir_spec, config):
         config = config or {}
         config["dbms.mode"] = "CORE"
-        super().__init__(name, service_name, bolt_port, http_port, dir_spec, config)
+        super().__init__(name, service_name, bolt_port, http_port,
+                         dir_spec, config)
 
 
 class Neo4jReplicaMachineSpec(Neo4jMachineSpec):
 
-    def __init__(self, name, service_name, bolt_port, http_port, dir_spec, config):
+    def __init__(self, name, service_name, bolt_port, http_port,
+                 dir_spec, config):
         config = config or {}
         config["dbms.mode"] = "READ_REPLICA"
-        super().__init__(name, service_name, bolt_port, http_port, dir_spec, config)
+        super().__init__(name, service_name, bolt_port, http_port,
+                         dir_spec, config)
 
 
 class Neo4jMachine:
@@ -169,10 +175,11 @@ class Neo4jMachine:
         self.docker = DockerClient.from_env(version="auto")
         environment = {}
         if self.auth:
-            environment["NEO4J_AUTH"] = "{}/{}".format(self.auth[0], self.auth[1])
+            environment["NEO4J_AUTH"] = "/".join(self.auth)
         environment["NEO4J_ACCEPT_LICENSE_AGREEMENT"] = "yes"
         for key, value in self.spec.config.items():
-            environment["NEO4J_" + key.replace("_", "__").replace(".", "_")] = value
+            fixed_key = "NEO4J_" + key.replace("_", "__").replace(".", "_")
+            environment[fixed_key] = value
         ports = {
             "7474/tcp": self.spec.http_port,
             "7687/tcp": self.spec.bolt_port,
@@ -182,14 +189,16 @@ class Neo4jMachine:
             makedirs(path, exist_ok=True)
 
         def create_container(img):
-            return self.docker.containers.create(img,
-                                                 detach=True,
-                                                 environment=environment,
-                                                 hostname=self.spec.fq_name,
-                                                 name=self.spec.fq_name,
-                                                 network=self.spec.service_name,
-                                                 ports=ports,
-                                                 volumes=volumes)
+            return self.docker.containers.create(
+                img,
+                detach=True,
+                environment=environment,
+                hostname=self.spec.fq_name,
+                name=self.spec.fq_name,
+                network=self.spec.service_name,
+                ports=ports,
+                volumes=volumes,
+            )
 
         try:
             self.container = create_container(self.image)
@@ -202,14 +211,19 @@ class Neo4jMachine:
         return hash(self.container)
 
     def __repr__(self):
-        return "%s(fq_name=%r, image=%r, address=%r)" % (self.__class__.__name__, self.spec.fq_name, self.image, self.addresses)
+        return "%s(fq_name={!r}, image={!r}, address={!r})".format(
+            self.__class__.__name__, self.spec.fq_name,
+            self.image, self.addresses)
 
     def start(self):
-        log.info("Starting machine %r at «%s»", self.spec.fq_name, self.addresses)
+        log.info("Starting machine %r at "
+                 "«%s»", self.spec.fq_name, self.addresses)
         self.container.start()
         self.container.reload()
-        self.ip_address = self.container.attrs["NetworkSettings"]["Networks"][self.spec.service_name]["IPAddress"]
-        log.debug("Machine %r has internal IP address «%s»", self.spec.fq_name, self.ip_address)
+        self.ip_address = (self.container.attrs["NetworkSettings"]
+                           ["Networks"][self.spec.service_name]["IPAddress"])
+        log.debug("Machine %r has internal IP address "
+                  "«%s»", self.spec.fq_name, self.ip_address)
 
     def ping(self, timeout):
         try:
@@ -231,15 +245,18 @@ class Neo4jMachine:
                 state = self.container.attrs["State"]
                 if state["Status"] == "exited":
                     self.ready = -1
-                    log.error("Machine %r exited with code %r", self.spec.fq_name, state["ExitCode"])
+                    log.error("Machine %r exited with code %r",
+                              self.spec.fq_name, state["ExitCode"])
                     for line in self.container.logs().splitlines():
                         log.error("> %s" % line.decode("utf-8"))
                 else:
-                    log.error("Machine %r did not become available within %rs", self.spec.fq_name, timeout)
+                    log.error("Machine %r did not become available "
+                              "within %rs", self.spec.fq_name, timeout)
             else:
                 self.ready = 1
         else:
-            log.error("Machine %r is not running (status=%r)", self.spec.fq_name, self.container.status)
+            log.error("Machine %r is not running (status=%r)",
+                      self.spec.fq_name, self.container.status)
             for line in self.container.logs().splitlines():
                 log.error("> %s" % line.decode("utf-8"))
 
@@ -323,6 +340,7 @@ class Neo4jService:
     def _random_name(cls):
         return "".join(choice("bcdfghjklmnpqrstvwxz") for _ in range(7))
 
+    # noinspection PyUnusedLocal
     def __init__(self, name=None, image=None, auth=None,
                  n_cores=None, n_replicas=None,
                  bolt_port=None, http_port=None,
@@ -449,15 +467,15 @@ class Neo4jService:
                 raise run.error
             if records:
                 ttl, server_lists = records[0]
-                routing_table = self.routing_tables.setdefault(tx_context,
-                                                               Neo4jRoutingTable())
-                routing_table.update(server_lists, ttl)
+                rt = self.routing_tables.setdefault(tx_context,
+                                                    Neo4jRoutingTable())
+                rt.update(server_lists, ttl)
             else:
                 raise RuntimeError("No routing data available for "
                                    "context {!r}".format(tx_context))
 
-    def run_console(self, read, write):
-        self.console = Neo4jConsole(self, read, write)
+    def run_console(self):
+        self.console = Neo4jConsole(self)
         self.console.invoke("env")
         self.console.run()
 
@@ -534,8 +552,10 @@ class Neo4jClusterService(Neo4jService):
                              "read replicas".format(self.min_replicas,
                                                     self.max_replicas))
 
-        core_bolt_port_range = self._port_range(bolt_port or self.default_bolt_port, self.max_cores)
-        core_http_port_range = self._port_range(http_port or self.default_http_port, self.max_cores)
+        core_bolt_port_range = self._port_range(
+            bolt_port or self.default_bolt_port, self.max_cores)
+        core_http_port_range = self._port_range(
+            http_port or self.default_http_port, self.max_cores)
         self.free_core_machine_specs = [
             Neo4jCoreMachineSpec(
                 name=chr(97 + i),
@@ -544,14 +564,18 @@ class Neo4jClusterService(Neo4jService):
                 http_port=core_http_port_range[i],
                 dir_spec=dir_spec,
                 config=dict(config or {}, **{
-                    "causal_clustering.minimum_core_cluster_size_at_formation": n_cores or self.min_cores,
-                    "causal_clustering.minimum_core_cluster_size_at_runtime": self.min_cores,
+                    "causal_clustering.minimum_core_cluster_size_at_formation":
+                        n_cores or self.min_cores,
+                    "causal_clustering.minimum_core_cluster_size_at_runtime":
+                        self.min_cores,
                 }),
             )
             for i in range(self.max_cores)
         ]
-        replica_bolt_port_range = self._port_range(ceil(core_bolt_port_range.stop / 10) * 10 + 1, self.max_replicas)
-        replica_http_port_range = self._port_range(ceil(core_http_port_range.stop / 10) * 10 + 1, self.max_replicas)
+        replica_bolt_port_range = self._port_range(
+            ceil(core_bolt_port_range.stop / 10) * 10 + 1, self.max_replicas)
+        replica_http_port_range = self._port_range(
+            ceil(core_http_port_range.stop / 10) * 10 + 1, self.max_replicas)
         self.free_replica_machine_specs = [
             Neo4jReplicaMachineSpec(
                 name=chr(49 + i),
@@ -581,7 +605,8 @@ class Neo4jClusterService(Neo4jService):
         for spec, machine in self.machines.items():
             if machine is None:
                 spec.config.update({
-                    "causal_clustering.initial_discovery_members": ",".join(discovery_addresses),
+                    "causal_clustering.initial_discovery_members":
+                        ",".join(discovery_addresses),
                 })
                 self.machines[spec] = Neo4jMachine(spec, self.image, self.auth)
 
@@ -600,8 +625,8 @@ class Neo4jClusterService(Neo4jService):
         else:
             return list(self.cores())
 
-    def run_console(self, read, write):
-        self.console = Neo4jClusterConsole(self, read, write)
+    def run_console(self):
+        self.console = Neo4jClusterConsole(self)
         self.console.run()
 
     def add_core(self):

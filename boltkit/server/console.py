@@ -26,8 +26,10 @@ import click
 
 from boltkit.addressing import AddressList
 
-# Imported to allow console history, etc
-# DO NOT REMOVE!!
+# The readline import allows for extended input functionality, including
+# up/down arrow navigation. This should not be removed.
+#
+# noinspection PyUnresolvedReferences
 import readline
 
 
@@ -40,10 +42,8 @@ class Neo4jConsole:
 
     tx_context = "system"
 
-    def __init__(self, service, read, write):
+    def __init__(self, service):
         self.service = service
-        self.read = read
-        self.write = write
 
     def __iter__(self):
         for name, value in getmembers(self):
@@ -103,7 +103,7 @@ class Neo4jConsole:
         except click.exceptions.Exit:
             pass
         except click.ClickException as e:
-            self.write(e.format_message())
+            click.echo(e.format_message())
         except RuntimeError as e:
             log.error("{}".format(e.args[0]))
 
@@ -119,7 +119,7 @@ class Neo4jConsole:
         """
 
         def f(m):
-            self.write("Opening web browser for machine {!r} at "
+            click.echo("Opening web browser for machine {!r} at "
                        "«{}»".format(m.spec.fq_name, m.spec.http_uri))
             open_browser(m.spec.http_uri)
 
@@ -139,7 +139,7 @@ class Neo4jConsole:
 
         """
         for key, value in sorted(self.service.env().items()):
-            self.write("%s=%r" % (key, value))
+            click.echo("%s=%r" % (key, value))
 
     @click.command()
     @click.pass_obj
@@ -161,9 +161,9 @@ class Neo4jConsole:
                 raise RuntimeError('No such command "%s".' % command)
             else:
                 ctx = self.help.make_context(command, [], obj=self)
-                self.write(f.get_help(ctx))
+                click.echo(f.get_help(ctx))
         else:
-            self.write("Commands:")
+            click.echo("Commands:")
             command_width = max(map(len, self))
             text_width = 73 - command_width
             template = "  {:<%d}   {}" % command_width
@@ -172,9 +172,9 @@ class Neo4jConsole:
                 text = [f.get_short_help_str(limit=text_width)]
                 for i, line in enumerate(text):
                     if i == 0:
-                        self.write(template.format(arg0, line))
+                        click.echo(template.format(arg0, line))
                     else:
-                        self.write(template.format("", line))
+                        click.echo(template.format("", line))
 
     @click.command()
     @click.option("-r", "--refresh", is_flag=True,
@@ -198,7 +198,7 @@ class Neo4jConsole:
 
         """
         self.service.update_routing_info(self.tx_context, force=refresh)
-        self.write("NAME        BOLT PORT   HTTP PORT   "
+        click.echo("NAME        BOLT PORT   HTTP PORT   "
                    "MODE           ROUTER   ROLES   CONTAINER")
         for spec, machine in self.service.machines.items():
             roles = ""
@@ -206,7 +206,7 @@ class Neo4jConsole:
                 roles += "r"
             if machine in self.service.writers(self.tx_context):
                 roles += "w"
-            self.write("{:<12}{:<12}{:<12}{:<15}{:<9}{:<8}{}".format(
+            click.echo("{:<12}{:<12}{:<12}{:<15}{:<9}{:<8}{}".format(
                 spec.fq_name,
                 spec.bolt_port,
                 spec.http_port,
@@ -241,13 +241,13 @@ class Neo4jConsole:
         role information along with each server.
         """
         self.service.update_routing_info(self.tx_context, force=refresh)
-        self.write("Routers: «%s»" % AddressList(
+        click.echo("Routers: «%s»" % AddressList(
             m.address for m in self.service.routers()))
-        self.write("Readers: «%s»" % AddressList(
+        click.echo("Readers: «%s»" % AddressList(
             m.address for m in self.service.readers(self.tx_context)))
-        self.write("Writers: «%s»" % AddressList(
+        click.echo("Writers: «%s»" % AddressList(
             m.address for m in self.service.writers(self.tx_context)))
-        self.write("(TTL: {!r}s, age: {})".format(
+        click.echo("(TTL: {!r}s, age: {})".format(
             self.service.ttl(self.tx_context),
             self.service.routing_tables[self.tx_context].age()))
 
@@ -261,7 +261,7 @@ class Neo4jConsole:
         """
 
         def f(m):
-            self.write(m.container.logs())
+            click.echo(m.container.logs())
 
         if not self._for_each_machine(machine, f):
             raise RuntimeError("Machine {!r} not found".format(machine))
