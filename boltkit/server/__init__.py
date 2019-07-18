@@ -32,7 +32,7 @@ from docker import DockerClient
 from docker.errors import ImageNotFound
 
 from boltkit.addressing import Address
-from boltkit.auth import make_auth
+from boltkit.auth import Auth, make_auth
 from boltkit.client import AddressList, Connection
 from boltkit.server.images import resolve_image
 from boltkit.server.console import Neo4jConsole, Neo4jClusterConsole
@@ -184,9 +184,12 @@ class Neo4jMachine:
             "7474/tcp": self.spec.http_port,
             "7687/tcp": self.spec.bolt_port,
         }
-        volumes = self.spec.dir_spec.volumes(self.spec.name)
-        for path in volumes:
-            makedirs(path, exist_ok=True)
+        if self.spec.dir_spec:
+            volumes = self.spec.dir_spec.volumes(self.spec.name)
+            for path in volumes:
+                makedirs(path, exist_ok=True)
+        else:
+            volumes = None
 
         def create_container(img):
             return self.docker.containers.create(
@@ -260,9 +263,9 @@ class Neo4jMachine:
             for line in self.container.logs().splitlines():
                 log.error("> %s" % line.decode("utf-8"))
 
-    def stop(self):
+    def stop(self, timeout):
         log.info("Stopping machine %r", self.spec.fq_name)
-        self.container.stop()
+        self.container.stop(timeout=timeout)
         self.container.remove(force=True)
 
 
@@ -348,7 +351,7 @@ class Neo4jService:
         self.name = name or self._random_name()
         self.docker = DockerClient.from_env(version="auto")
         self.image = resolve_image(image or self.default_image)
-        self.auth = auth or make_auth()
+        self.auth = Auth(*auth) if auth else make_auth()
         if self.auth.user != "neo4j":
             raise ValueError("Auth user must be 'neo4j' or empty")
         self.machines = {}
@@ -360,7 +363,7 @@ class Neo4jService:
         try:
             self.start(timeout=300)
         except KeyboardInterrupt:
-            self.stop()
+            self.stop(timeout=300)
             raise
         else:
             return self
@@ -425,10 +428,15 @@ class Neo4jService:
             raise RuntimeError("Service %r unavailable - "
                                "some machines failed", self.name)
 
-    def stop(self):
+    def stop(self, timeout=None):
         log.info("Stopping service %r", self.name)
-        self._for_each_machine(lambda machine: machine.stop)
-        self.network.remove()
+
+        def _stop(machine):
+            machine.stop(timeout)
+
+        self._for_each_machine(_stop)
+        if self.network:
+            self.network.remove()
 
     @property
     def addresses(self):
