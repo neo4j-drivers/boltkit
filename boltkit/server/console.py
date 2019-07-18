@@ -240,7 +240,11 @@ class Neo4jConsole:
         The routing information is cached so that any subsequent `ls` can show
         role information along with each server.
         """
-        self.service.update_routing_info(self.tx_context, force=refresh)
+        updated = self.service.update_routing_info(self.tx_context,
+                                                   force=refresh)
+        if updated is False:
+            raise RuntimeError("No routing data available for "
+                               "context {!r}".format(self.tx_context))
         click.echo("Routers: «%s»" % AddressList(
             m.address for m in self.service.routers()))
         click.echo("Readers: «%s»" % AddressList(

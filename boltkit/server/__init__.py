@@ -453,7 +453,7 @@ class Neo4jService:
 
     def update_routing_info(self, tx_context, force):
         if self._has_valid_routing_table(tx_context) and not force:
-            return
+            return None
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             routing_context = {}
             records = []
@@ -472,15 +472,16 @@ class Neo4jService:
             cx.send_all()
             cx.fetch_all()
             if run.error:
-                raise run.error
+                log.debug(run.error.args[0])
+                return False
             if records:
                 ttl, server_lists = records[0]
                 rt = self.routing_tables.setdefault(tx_context,
                                                     Neo4jRoutingTable())
                 rt.update(server_lists, ttl)
+                return True
             else:
-                raise RuntimeError("No routing data available for "
-                                   "context {!r}".format(tx_context))
+                return False
 
     def run_console(self):
         self.console = Neo4jConsole(self)
