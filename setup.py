@@ -44,7 +44,7 @@ package_metadata = {
         "certifi",
         "click~=7.0",
         "docker",
-        "urllib3<1.25,>=1.21.1",
+        "urllib3<1.25,>=1.23",
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [

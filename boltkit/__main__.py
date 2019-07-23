@@ -77,6 +77,7 @@ class ConfigParamType(click.ParamType):
 
 def watch_log(ctx, param, value):
     watch("boltkit", DEBUG if value >= 1 else INFO)
+    watch("urllib3", DEBUG if value >= 1 else INFO)
 
 
 @click.group()
@@ -306,7 +307,6 @@ def server(command, name, image, auth, n_cores, n_replicas,
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        raise
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 

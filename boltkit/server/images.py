@@ -154,8 +154,12 @@ def download_snapshot_artifact(artifact):
     log.info("Downloading {} from «{}»".format(
         artifact, snapshot_host))
     url = "{}/{}".format(snapshot_build_url, artifact)
-    log.debug("Downloading file {}".format(url))
-    r2 = teamcity_http.request("GET", url)
-    images = docker.images.load(r2.data)
-    image = images[0]
-    return image.tags[0]
+    r = teamcity_http.request("GET", url)
+    if r.status == 200:
+        images = docker.images.load(r.data)
+        image = images[0]
+        return image.tags[0]
+    else:
+        log.error("{}".format(r.data))
+        raise RuntimeError("Download failed with HTTP "
+                           "status {} {}".format(r.status, r.reason))
