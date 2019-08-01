@@ -30,12 +30,13 @@ from select import select
 from socket import socket, SOL_SOCKET, SO_REUSEADDR, SHUT_RDWR
 from struct import pack as raw_pack, unpack_from as raw_unpack
 from threading import Thread
+from time import sleep
 
 from boltkit.addressing import Address
 from boltkit.server.bytetools import h
 from boltkit.client import CLIENT, SERVER, BOLT
 from boltkit.client.packstream import UINT_16, INT_32, Structure, pack, unpack
-from boltkit.server.scripting import Script, ExitCommand
+from boltkit.server.scripting import Script, ExitCommand, SleepCommand
 
 
 EXIT_OK = 0
@@ -87,6 +88,13 @@ class StubServer(Thread):
         self.timeout = timeout
         self.exit_code = 0
 
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.join()
+
     def run(self):
         self.peers[self.server] = Peer(self.server, self.address)
         while self.running:
@@ -113,7 +121,7 @@ class StubServer(Thread):
             return
         peers, self.peers, self.running = list(self.peers.items()), {}, False
         for sock, peer in peers:
-            log.debug("~~ <CLOSE> \"%s\" %d", *peer.address)
+            log.debug("~~ <CLOSE> «%s»", peer.address)
             try:
                 sock.shutdown(SHUT_RDWR)
                 sock.close()
@@ -149,21 +157,24 @@ class StubServer(Thread):
             self.stop()
             return
         raw_data = sock.recv(16)
+        log.debug("C: <HANDSHAKE> %r", raw_data)
         suggested_version_1, = raw_unpack(INT_32, raw_data, 0)
         suggested_version_2, = raw_unpack(INT_32, raw_data, 4)
         suggested_version_3, = raw_unpack(INT_32, raw_data, 8)
         suggested_version_4, = raw_unpack(INT_32, raw_data, 12)
         client_requested_versions = [suggested_version_1, suggested_version_2, suggested_version_3, suggested_version_4]
-        log.debug("C: <VERSION> [0x%08x, 0x%08x, 0x%08x, 0x%08x]" % tuple(client_requested_versions))
 
-        v = self.script.bolt_version
-        if v not in client_requested_versions:
-            raise RuntimeError("Script protocol version %r not offered by client" % v)
+        if isinstance(self.script.raw_handshake, (bytes, bytearray)):
+            response = self.script.raw_handshake
+        else:
+            v = self.script.bolt_version
+            if v not in client_requested_versions:
+                raise RuntimeError("Script protocol version %r not offered by client" % v)
 
-        # only single protocol version is currently supported
-        response = raw_pack(INT_32, v)
-        log.debug("S: <VERSION> 0x%08x" % v)
-        self.peers[sock].bolt_version = v
+            # only single protocol version is currently supported
+            response = raw_pack(INT_32, v)
+            self.peers[sock].bolt_version = v
+        log.debug("S: <HANDSHAKE> %r", response)
         sock.send(response)
 
     def handle_request(self, sock):
@@ -229,6 +240,8 @@ class StubServer(Thread):
             elif isinstance(response, ExitCommand):
                 self.stop()
                 raise SystemExit(EXIT_OK)
+            elif isinstance(response, SleepCommand):
+                sleep(response.delay)
             else:
                 raise RuntimeError("Unknown response type %r" % (response,))
 

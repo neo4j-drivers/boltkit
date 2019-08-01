@@ -21,6 +21,7 @@
 
 from collections import deque
 from json import JSONDecoder
+from textwrap import wrap
 
 from boltkit.client import CLIENT, SERVER, MAX_BOLT_VERSION, Structure
 
@@ -38,6 +39,12 @@ class Line(Item):
         self.message = message
 
 
+class SleepCommand(Item):
+
+    def __init__(self, delay):
+        self.delay = delay
+
+
 class ExitCommand(Item):
 
     pass
@@ -46,6 +53,7 @@ class ExitCommand(Item):
 class Script(object):
 
     def __init__(self, file_name=None):
+        self.raw_handshake = None
         self.bolt_version = 1
         self.auto = []
         self.lines = deque()
@@ -87,6 +95,9 @@ class Script(object):
         tag, _, data = message.partition(" ")
         if tag == "<EXIT>":
             return ExitCommand()
+        elif tag == "<SLEEP>":
+            n = float(data)
+            return SleepCommand(n)
         else:
             raise ValueError("Unknown command %s" % tag)
 
@@ -115,11 +126,16 @@ class Script(object):
                         if self.bolt_version < 0 or self.bolt_version > MAX_BOLT_VERSION or CLIENT[self.bolt_version] is None:
                             raise RuntimeError("Protocol version %r in script %r is not available "
                                                "in this version of BoltKit" % (self.bolt_version, file_name))
+                    if command == "HANDSHAKE":
+                        self.raw_handshake = bytes(bytearray(int(_, 16) for _ in wrap(rest, 2)))
                 elif mode in "CS":
                     if line.startswith("<"):
                         lines.append(Line(self.bolt_version, line_no, mode, self.parse_command(line)))
                     else:
                         lines.append(Line(self.bolt_version, line_no, mode, self.parse_message(line)))
+
+    def awaiting_request(self):
+        return self.lines and self.lines[0].mode == "C"
 
     def match_auto_request(self, request):
         for message in self.auto:
@@ -148,6 +164,8 @@ class Script(object):
             if isinstance(line, Line):
                 responses.append(line.message)
             elif isinstance(line, ExitCommand):
+                pass
+            elif isinstance(line, SleepCommand):
                 pass
             else:
                 raise RuntimeError("Unexpected response %r" % line)
