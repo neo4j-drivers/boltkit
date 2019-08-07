@@ -1,1 +1,2 @@
 boto==2.48.0
+pyopenssl>=19.0.0

@@ -45,7 +45,14 @@ except ImportError:
     from urllib2 import urlopen, Request, HTTPError
     from urlparse import urlparse
 
+from OpenSSL import crypto, SSL
+from socket import gethostname
+
 DIST_HOST = "dist.neo4j.org"
+
+CERT_FOLDER = "certificates"  # Relative to neo4j_home
+CERT_FILE = "neo4j.cert"
+KEY_FILE = "neo4j.key"
 
 
 def bstr(s):
@@ -235,6 +242,32 @@ def get_env_variable_or_raise_error(name):
     return value
 
 
+def create_self_signed_cert(cert_path, key_path):
+    # create a key pair
+    key = crypto.PKey()
+    key.generate_key(crypto.TYPE_RSA, 1024)
+
+    # create a self-signed cert
+    cert = crypto.X509()
+    cert.get_subject().C = "UK"
+    cert.get_subject().ST = "London"
+    cert.get_subject().L = "London"
+    cert.get_subject().O = "Dev"
+    cert.get_subject().OU = "Drivers"
+    cert.get_subject().CN = "localhost"
+    cert.set_serial_number(1000)
+    cert.gmtime_adj_notBefore(0)
+    cert.gmtime_adj_notAfter(10*365*24*60*60)
+    cert.set_issuer(cert.get_subject())
+    cert.set_pubkey(key)
+    cert.sign(key, 'sha1')
+
+    with open(cert_path, "wb") as cert_file:
+        cert_file.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
+    with open(key_path, "wb") as key_file:
+        key_file.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, key))
+
+
 class Controller(object):
     package_format = None
 
@@ -252,6 +285,14 @@ class Controller(object):
     def install(cls, edition, version, path, **kwargs):
         package = cls.download(edition, version, path, **kwargs)
         home = cls.extract(package, path)
+
+        # By default we install a self-signed cert before server start.
+        try:
+            makedirs(path_join(home, CERT_FOLDER))
+        except OSError:
+            pass
+        create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
+                                path_join(home, CERT_FOLDER, KEY_FILE))
         return realpath(home)
 
     @classmethod

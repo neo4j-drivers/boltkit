@@ -50,7 +50,8 @@ package_metadata = {
     },
     "packages": packages,
     "install_requires": [
-        "boto==2.48.0"
+        "boto==2.48.0",
+        "pyopenssl>=19.0.0"
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [
