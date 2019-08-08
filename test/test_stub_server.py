@@ -19,97 +19,109 @@
 # limitations under the License.
 
 
-from unittest import TestCase
-
 from boltkit.client import Connection
-from boltkit.server.stub import stub_test
+from boltkit.server.scripting import BoltScript
+from boltkit.server.stub import stub_test, BoltStubService
 
 
-class ReturnOneTestCase(TestCase):
+def script(*paths):
+    from importlib import import_module
+    from os.path import dirname, join
+    return join(dirname(import_module("test").__file__), "scripts", *paths)
 
-    @stub_test("scripts/v1/return_1_as_x.bolt")
-    def test_v1(self, server):
+
+def test_v1():
+
+    with BoltStubService.load(script("v1", "return_1_as_x.bolt")) as service:
 
         # Given
-        with Connection.open(*server.addresses, **server.settings) as cx:
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
 
             # When
             records = []
             cx.run("RETURN $x", {"x": 1})
-            cx.pull(-1, records)
+            cx.pull(-1, -1, records)
             cx.send_all()
             cx.fetch_all()
 
             # Then
-            self.assertEqual(records, [[1]])
-            self.assertEqual(cx.bolt_version, 1)
+            assert records == [[1]]
+            assert cx.bolt_version == 1
 
-    @stub_test("scripts/v2/return_1_as_x.bolt")
-    def test_v2(self, server):
+
+def test_v2():
+
+    with BoltStubService.load(script("v2", "return_1_as_x.bolt")) as service:
 
         # Given
-        with Connection.open(*server.addresses, **server.settings) as cx:
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
 
             # When
             records = []
             cx.run("RETURN $x", {"x": 1})
-            cx.pull(-1, records)
+            cx.pull(-1, -1, records)
             cx.send_all()
             cx.fetch_all()
 
             # Then
-            self.assertEqual(records, [[1]])
-            self.assertEqual(cx.bolt_version, 2)
+            assert records == [[1]]
+            assert cx.bolt_version == 2
 
-    @stub_test("scripts/v3/return_1_as_x.bolt")
-    def test_v3(self, server):
+
+def test_v3():
+
+    with BoltStubService.load(script("v3", "return_1_as_x.bolt")) as service:
 
         # Given
-        with Connection.open(*server.addresses, **server.settings) as cx:
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
 
             # When
             records = []
             cx.run("RETURN $x", {"x": 1})
-            cx.pull(-1, records)
+            cx.pull(-1, -1, records)
             cx.send_all()
             cx.fetch_all()
 
             # Then
-            self.assertEqual(records, [[1]])
-            self.assertEqual(cx.bolt_version, 3)
+            assert records == [[1]]
+            assert cx.bolt_version == 3
 
-    @stub_test("scripts/v4/return_1_as_x.bolt")
-    def test_v4(self, server):
+
+def test_v4():
+
+    with BoltStubService.load(script("v4", "return_1_as_x.bolt")) as service:
 
         # Given
-        with Connection.open(*server.addresses, **server.settings) as cx:
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
 
             # When
             records = []
             cx.run("RETURN $x", {"x": 1})
-            cx.pull(-1, records)
+            cx.pull(-1, -1, records)
             cx.send_all()
             cx.fetch_all()
 
             # Then
-            self.assertEqual(records, [[1]])
-            self.assertEqual(cx.bolt_version, 4)
+            assert records == [[1]]
+            assert cx.bolt_version == 4
 
-    @stub_test("scripts/v4/return_1_as_x_explicit.bolt")
-    def test_v4_explicit(self, server):
+
+def test_v4_explicit():
+
+    with BoltStubService.load(script("v4", "return_1_as_x_explicit.bolt")) as service:
 
         # Given
-        with Connection.open(*server.addresses, **server.settings) as cx:
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
 
             # When
             records = []
             cx.begin()
             cx.run("RETURN $x", {"x": 1})
-            cx.pull(-1, records)
+            cx.pull(-1, -1, records)
             cx.commit()
             cx.send_all()
             cx.fetch_all()
 
             # Then
-            self.assertEqual(records, [[1]])
-            self.assertEqual(cx.bolt_version, 4)
+            assert records == [[1]]
+            assert cx.bolt_version == 4

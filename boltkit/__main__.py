@@ -22,7 +22,6 @@
 from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
-from webbrowser import open as open_browser
 
 import click
 from click import Path
@@ -32,8 +31,9 @@ from boltkit.auth import AuthParamType, Auth
 from boltkit.client import Connection
 from boltkit.dist import Distributor
 from boltkit.server import Neo4jService, Neo4jDirectorySpec
+from boltkit.server.scripting import BoltScript
+from boltkit.server.stub import BoltStubService
 from boltkit.server.proxy import ProxyServer
-from boltkit.server.stub import StubServer
 from boltkit.watcher import watch
 
 
@@ -131,32 +131,36 @@ useful for Bolt client integration testing.
 """)
 @click.option("-l", "--listen-addr", type=AddressParamType(),
               envvar="BOLT_LISTEN_ADDR",
-              help="The address on which to listen for incoming connections "
+              help="The base address on which to listen for incoming connections "
                    "in INTERFACE:PORT format, where INTERFACE may be omitted "
-                   "for 'localhost'. If completely omitted, this defaults to "
-                   "':17687'. The BOLT_LISTEN_ADDR environment variable may "
-                   "be used as an alternative to this option.")
+                   "for 'localhost'. Each script (which doesn't specify an "
+                   "explicit port number) will use subsequent ports. If "
+                   "completely omitted, this defaults to "
+                   "':17601'. The BOLT_LISTEN_ADDR environment variable may "
+                   "be used as an alternative to this option. Scripts may also "
+                   "specify their own explicit port numbers.")
 @click.option("-t", "--timeout", type=float,
-              help="The number of seconds for which the stub server will wait "
-                   "for an incoming connection before automatically "
-                   "terminating. If unspecified, the server will wait "
-                   "indefinitely.")
+              help="The number of seconds for which the stub server will run "
+                   "before automatically terminating. If unspecified, the "
+                   "server will wait for 30 seconds.")
 @click.option("-v", "--verbose", count=True, callback=watch_log,
               expose_value=False, is_eager=True,
               help="Show more detail about the client-server exchange.")
-@click.argument("script")
+@click.argument("script", nargs=-1)
 def stub(script, listen_addr, timeout):
-    stub_server = StubServer(script, listen_addr, timeout=timeout)
+    scripts = map(BoltScript.load, script)
+    service = BoltStubService(*scripts, listen_addr=listen_addr, timeout=timeout)
     try:
-        stub_server.start()
-        stub_server.join()
+        service.start()
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
+    else:
+        exit(service.exit_code)
     finally:
-        exit(stub_server.exit_code)
+        service.wait_stopped()
 
 
 @bolt.command(help="""\

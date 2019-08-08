@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# Copyright (c) 2002-2016 "Neo Technology,"
+# Copyright (c) 2002-2019 "Neo Technology,"
 # Network Engine for Objects in Lund AB [http://neotechnology.com]
 #
 # This file is part of Neo4j.
@@ -19,158 +19,482 @@
 # limitations under the License.
 
 
-from collections import deque
+from asyncio import sleep
 from json import JSONDecoder
 from textwrap import wrap
 
-from boltkit.client import CLIENT, SERVER, MAX_BOLT_VERSION, Structure
+from boltkit.packstream import Structure
 
 
-class Item(object):
-    pass
+def splart(s):
+    parts = s.split(maxsplit=1)
+    while len(parts) < 2:
+        parts.append("")
+    return parts
 
 
-class Line(Item):
+class BoltScript:
 
-    def __init__(self, protocol_version, line_no, peer, message):
-        self.protocol_version = protocol_version
-        self.line_no = line_no
-        self.peer = peer
-        self.message = message
+    protocol_version = ()
 
+    messages = {
+        "C": {},
+        "S": {},
+    }
 
-class SleepCommand(Item):
-
-    def __init__(self, delay):
-        self.delay = delay
-
-
-class ExitCommand(Item):
-
-    pass
-
-
-class Script(object):
-
-    def __init__(self, file_name=None):
-        self.raw_handshake = None
-        self.bolt_version = 1
-        self.auto = []
-        self.lines = deque()
-        if file_name:
-            self.append(file_name)
-
-    def __nonzero__(self):
-        return bool(self.lines)
-
-    def __bool__(self):
-        return bool(self.lines)
-
-    def __len__(self):
-        return len(self.lines)
-
-    def parse_message(self, message):
-        tag, _, data = message.partition(" ")
-        v = self.bolt_version
-        if tag in CLIENT[v]:
-            parsed_tag = CLIENT[v][tag]
-        elif tag in SERVER[v]:
-            parsed_tag = SERVER[v][tag]
+    def __new__(cls, *lines, auto=None, filename=None, handshake_data=None,
+                port=None, version=None):
+        if version is None or version in {(1,), (3, 0), (3, 1), (3, 2), (3, 3)}:
+            return super().__new__(Bolt1Script)
+        elif version in {(2,), (3, 4)}:
+            return super().__new__(Bolt2Script)
+        elif version in {(3,), (3, 5), (3, 6)}:
+            return super().__new__(Bolt3Script)
+        elif version in {(4,), (4, 0)}:
+            return super().__new__(Bolt4Script)
         else:
-            raise ValueError("Unknown message type %s" % tag)
+            raise BoltScriptError("Unsupported version {}".format(version))
+
+    def __init__(self, *lines, auto=None, filename=None, handshake_data=None,
+                 port=None, **_):
+        self._lines = []
+        for line in lines:
+            self.append(line)
+        self._auto = list(auto or [])
+        self.filename = filename or ""
+        self.handshake_data = handshake_data
+        self.port = port or 0
+
+    def __iter__(self):
+        for line in self._lines:
+            yield line
+
+    def append(self, line):
+        line.script = self
+        self._lines.append(line)
+
+    def auto_match(self, tag):
+        return self.tag_name("C", tag) in self._auto
+
+    def on_auto_match(self, request):
+        raise NotImplementedError
+
+    @classmethod
+    def tag(cls, role, name):
+        tags = [k for k, v in cls.messages[role].items() if v == name]
+        if tags:
+            return tags[0]
+        else:
+            raise ValueError("Message %r not available for protocol "
+                             "version %s" % (name, ".".join(map(str, cls.protocol_version))))
+
+    @classmethod
+    def tag_name(cls, role, tag):
+        try:
+            return cls.messages[role][tag]
+        except KeyError:
+            return "<Structure[0x%02X]>" % ord(tag)
+
+    @classmethod
+    def parse(cls, source):
+        return cls.parse_lines(source.splitlines())
+
+    @classmethod
+    def load(cls, filename):
+        with open(filename) as fin:
+            def iter_lines():
+                for line in fin:
+                    yield line
+
+            script = cls.parse_lines(iter_lines())
+            script.filename = filename
+            return script
+
+    @classmethod
+    def parse_lines(cls, lines):
+        out = []
+        metadata = {
+            "auto": [],
+        }
+        last_role = ""
+        for line_no, line in enumerate(lines, start=1):
+            role, tag, fields = cls.parse_line(line)
+            if not tag:
+                continue
+            if role:
+                last_role = role
+            else:
+                role = last_role
+            if role == "!":
+                if tag == "AUTO":
+                    metadata["auto"].append(fields[0])
+                elif tag in {"BOLT", "NEO4J"}:
+                    metadata["version"] = tuple(map(int, str(fields[0]).split(".")))
+                elif tag == "HANDSHAKE":
+                    metadata["handshake_data"] = bytearray(int(_, 16) for _ in wrap(fields[0], 2))
+                elif tag == "PORT":
+                    metadata["port"] = fields[0]
+                else:
+                    raise ValueError("Unknown meta tag {!r}".format(tag))
+                pass
+            elif role == "C":
+                out.append(ClientMessageLine(tag, *fields))
+                out[-1].line_no = line_no
+            elif role == "S":
+                if tag.startswith("<") and tag.endswith(">"):
+                    if tag == "<EXIT>":
+                        out.append(ServerExitLine())
+                        out[-1].line_no = line_no
+                    elif tag == "<RAW>":
+                        out.append(ServerRawBytesLine(bytearray(int(_, 16)
+                                                                for _ in wrap(fields[0], 2))))
+                        out[-1].line_no = line_no
+                    elif tag == "<SLEEP>":
+                        out.append(ServerSleepLine(fields[0]))
+                        out[-1].line_no = line_no
+                    else:
+                        raise ValueError("Unknown command %r" % (tag,))
+                else:
+                    out.append(ServerMessageLine(tag, *fields))
+                    out[-1].line_no = line_no
+            else:
+                raise ValueError("Unknown role %r" % (role,))
+        return BoltScript(*out, **metadata)
+
+    @classmethod
+    def parse_line(cls, line):
+        role = ""
+        tag, data = splart(line.strip())
+        fields = []
+        if tag.endswith(":"):
+            role = tag.rstrip(":")
+            tag, data = splart(data)
         decoder = JSONDecoder()
-        parsed = []
         while data:
             data = data.lstrip()
             try:
                 decoded, end = decoder.raw_decode(data)
             except ValueError:
-                break
+                fields.append(data)
+                data = ""
             else:
-                parsed.append(decoded)
+                fields.append(decoded)
                 data = data[end:]
-        return Structure(parsed_tag, *parsed)
+        return role, tag, fields
 
-    def parse_command(self, message):
-        tag, _, data = message.partition(" ")
-        if tag == "<EXIT>":
-            return ExitCommand()
-        elif tag == "<SLEEP>":
-            n = float(data)
-            return SleepCommand(n)
+
+class Bolt1Script(BoltScript):
+
+    protocol_version = (1, 0)
+
+    messages = {
+        "C": {
+            b"\x01": "INIT",
+            b"\x0E": "ACK_FAILURE",
+            b"\x0F": "RESET",
+            b"\x10": "RUN",
+            b"\x2F": "DISCARD_ALL",
+            b"\x3F": "PULL_ALL",
+        },
+        "S": {
+            b"\x70": "SUCCESS",
+            b"\x71": "RECORD",
+            b"\x7E": "IGNORED",
+            b"\x7F": "FAILURE",
+        },
+    }
+
+    server_agent = "Neo4j/3.3.0"
+
+    def on_handshake(self, request):
+        handshake_data = self.handshake_data
+        if handshake_data is None:
+            handshake_data = bytearray()
+            for value in self.protocol_version:
+                handshake_data.insert(0, value)
+            while len(handshake_data) < 4:
+                handshake_data.insert(0, 0)
+        return bytes(handshake_data)
+
+    def on_auto_match(self, request):
+        if request.tag == b"\x01":
+            yield Structure(b"\x70", {
+                "server": self.server_agent,
+            })
         else:
-            raise ValueError("Unknown command %s" % tag)
+            yield Structure(b"\x70", {})
 
-    def parse_lines(self, lines):
-        mode = "C"
-        for line_no, line in enumerate(lines, start=1):
-            line = line.rstrip()
-            if line == "" or line.startswith("//"):
-                pass
-            elif len(line) >= 2 and line[1] == ":":
-                mode = line[0].upper()
-                yield line_no, mode, line[2:].lstrip()
-            elif mode is not None:
-                yield line_no, mode, line.lstrip()
 
-    def append(self, file_name):
-        lines = self.lines
-        with open(file_name) as f:
-            for line_no, mode, line in self.parse_lines(f):
-                if mode == "!":
-                    command, _, rest = line.partition(" ")
-                    if command == "AUTO":
-                        self.auto.append(self.parse_message(rest))
-                    if command == "BOLT":
-                        self.bolt_version = int(rest)
-                        if self.bolt_version < 0 or self.bolt_version > MAX_BOLT_VERSION or CLIENT[self.bolt_version] is None:
-                            raise RuntimeError("Protocol version %r in script %r is not available "
-                                               "in this version of BoltKit" % (self.bolt_version, file_name))
-                    if command == "HANDSHAKE":
-                        self.raw_handshake = bytes(bytearray(int(_, 16) for _ in wrap(rest, 2)))
-                elif mode in "CS":
-                    if line.startswith("<"):
-                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_command(line)))
-                    else:
-                        lines.append(Line(self.bolt_version, line_no, mode, self.parse_message(line)))
+class Bolt2Script(BoltScript):
 
-    def awaiting_request(self):
-        return self.lines and self.lines[0].mode == "C"
+    protocol_version = (2, 0)
 
-    def match_auto_request(self, request):
-        for message in self.auto:
-            if request.tag == message.tag:
-                return True
-            elif request == message:
-                return True
-        return False
+    messages = {
+        "C": {
+            b"\x01": "INIT",
+            b"\x0E": "ACK_FAILURE",
+            b"\x0F": "RESET",
+            b"\x10": "RUN",
+            b"\x2F": "DISCARD_ALL",
+            b"\x3F": "PULL_ALL",
+        },
+        "S": {
+            b"\x70": "SUCCESS",
+            b"\x71": "RECORD",
+            b"\x7E": "IGNORED",
+            b"\x7F": "FAILURE",
+        },
+    }
 
-    def match_request(self, request):
-        if not self.lines:
-            return 0
-        line = self.lines[0]
-        if line.peer != "C":
-            return 0
-        if match(line.message, request):
-            self.lines.popleft()
-            return 1
+    server_agent = "Neo4j/3.4.0"
+
+    def on_handshake(self, request):
+        handshake_data = self.handshake_data
+        if handshake_data is None:
+            handshake_data = bytearray()
+            for value in self.protocol_version:
+                handshake_data.insert(0, value)
+            while len(handshake_data) < 4:
+                handshake_data.insert(0, 0)
+        return bytes(handshake_data)
+
+    def on_auto_match(self, request):
+        if request.tag == b"\x01":
+            yield Structure(b"\x70", {
+                "server": self.server_agent,
+            })
         else:
-            return 0
+            yield Structure(b"\x70", {})
 
-    def match_responses(self):
-        responses = []
-        while self.lines and self.lines[0].peer == "S":
-            line = self.lines.popleft()
-            if isinstance(line, Line):
-                responses.append(line.message)
-            elif isinstance(line, ExitCommand):
-                pass
-            elif isinstance(line, SleepCommand):
-                pass
+
+class Bolt3Script(BoltScript):
+
+    protocol_version = (3, 0)
+
+    messages = {
+        "C": {
+            b"\x01": "HELLO",
+            b"\x02": "GOODBYE",
+            b"\x0F": "RESET",
+            b"\x10": "RUN",
+            b"\x11": "BEGIN",
+            b"\x12": "COMMIT",
+            b"\x13": "ROLLBACK",
+            b"\x2F": "DISCARD_ALL",
+            b"\x3F": "PULL_ALL",
+        },
+        "S": {
+            b"\x70": "SUCCESS",
+            b"\x71": "RECORD",
+            b"\x7E": "IGNORED",
+            b"\x7F": "FAILURE",
+        },
+    }
+
+    server_agent = "Neo4j/3.5.0"
+
+    def on_handshake(self, request):
+        handshake_data = self.handshake_data
+        if handshake_data is None:
+            handshake_data = bytearray()
+            for value in self.protocol_version:
+                handshake_data.insert(0, value)
+            while len(handshake_data) < 4:
+                handshake_data.insert(0, 0)
+        return bytes(handshake_data)
+
+    def on_auto_match(self, request):
+        if request.tag == b"\x01":
+            yield Structure(b"\x70", {
+                "connection_id": "bolt-0",
+                "server": self.server_agent,
+            })
+        else:
+            yield Structure(b"\x70", {})
+
+
+class Bolt4Script(BoltScript):
+
+    protocol_version = (4, 0)
+
+    messages = {
+        "C": {
+            b"\x01": "HELLO",
+            b"\x02": "GOODBYE",
+            b"\x0F": "RESET",
+            b"\x10": "RUN",
+            b"\x11": "BEGIN",
+            b"\x12": "COMMIT",
+            b"\x13": "ROLLBACK",
+            b"\x2F": "DISCARD",
+            b"\x3F": "PULL",
+        },
+        "S": {
+            b"\x70": "SUCCESS",
+            b"\x71": "RECORD",
+            b"\x7E": "IGNORED",
+            b"\x7F": "FAILURE",
+        },
+    }
+
+    server_agent = "Neo4j/4.0.0"
+
+    def on_handshake(self, request):
+        handshake_data = self.handshake_data
+        if handshake_data is None:
+            handshake_data = bytearray()
+            for value in self.protocol_version:
+                handshake_data.insert(0, value)
+            while len(handshake_data) < 4:
+                handshake_data.insert(0, 0)
+        return bytes(handshake_data)
+
+    def on_auto_match(self, request):
+        if request.tag == b"\x01":
+            yield Structure(b"\x70", {
+                "connection_id": "bolt-0",
+                "server": self.server_agent,
+            })
+        else:
+            yield Structure(b"\x70", {})
+
+
+class BoltScriptError(Exception):
+
+    pass
+
+
+class Line:
+
+    script = None   # TODO - make context-free
+
+    line_no = None
+
+    async def action(self, actor):
+        pass
+
+
+class ClientLine(Line):
+
+    pass
+
+
+class ServerLine(Line):
+
+    pass
+
+
+class ClientMessageLine(ClientLine):
+
+    def __init__(self, tag_name, *fields):
+        self.tag_name = tag_name
+        self.fields = fields
+
+    def __str__(self):
+        return "C: %s %s" % (self.tag_name, " ".join(map(repr, self.fields)))
+
+    async def action(self, actor):
+        # TODO: improve the flow of logic here
+        request = None
+        c_msg = None
+        more = True
+        while more:
+            request = await actor.stream.read_message()
+            tag = self.script.tag_name("C", request.tag)
+            c_msg = ClientMessageLine(tag, *request.fields)
+            c_msg.script = self.script
+            if self.script.auto_match(request.tag):
+                # Auto-matched
+                actor.log("(AUTO) %s", c_msg)
+                for response in self.script.on_auto_match(request):
+                    tag = self.script.tag_name("S", response.tag)
+                    s_msg = ServerMessageLine(tag, *response.fields)
+                    s_msg.script = self.script
+                    actor.log("(AUTO) %s", s_msg)
+                    actor.stream.write_message(response)
+                await actor.stream.drain()
             else:
-                raise RuntimeError("Unexpected response %r" % line)
-        return responses
+                more = False
+        if self.match(request):
+            actor.log("%s", c_msg)
+        else:
+            actor.log("%s", c_msg)
+            raise ClientMessageMismatch("Script mismatch\n"
+                                        "Expected | {}\n"
+                                        "Received | {}".format(self, c_msg), self, c_msg)
+
+    def match(self, message):
+        tag = self.script.tag("C", self.tag_name)
+        return tag == message.tag and tuple(self.fields) == tuple(message.fields)
 
 
-def match(expected, actual):
-    return expected == actual
+class ServerMessageLine(ServerLine):
+
+    def __init__(self, tag_name, *fields):
+        self.tag_name = tag_name
+        self.fields = fields
+
+    def __str__(self):
+        return "S: %s %s" % (self.tag_name, " ".join(map(repr, self.fields)))
+
+    async def action(self, actor):
+        actor.log("%s", self)
+        tag = self.script.tag("S", self.tag_name)
+        actor.stream.write_message(Structure(tag, *self.fields))
+        await actor.stream.drain()
+
+
+class ServerRawBytesLine(ServerLine):
+
+    def __init__(self, data):
+        self.data = data
+
+    def __str__(self):
+        return "S: <RAW> %r" % (self.data,)
+
+    async def action(self, actor):
+        actor.log("%s", self)
+        actor.writer.write(self.data)
+        await actor.writer.drain()
+
+
+class ServerSleepLine(ServerLine):
+
+    def __init__(self, delay):
+        self.delay = delay
+
+    def __str__(self):
+        return "S: <SLEEP> %r" % (self.delay,)
+
+    async def action(self, actor):
+        actor.log("%s", self)
+        await sleep(self.delay)
+
+
+class ServerExitLine(ServerLine):
+
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return "S: <EXIT>"
+
+    async def action(self, actor):
+        actor.log("%s", self)
+        raise ServerExit()
+
+
+class ClientMessageMismatch(Exception):
+
+    script = None
+    line_no = None
+
+    def __init__(self, message, expected, received):
+        super().__init__(message)
+        self.expected = expected
+        self.received = received
+
+
+class ServerExit(Exception):
+
+    pass
