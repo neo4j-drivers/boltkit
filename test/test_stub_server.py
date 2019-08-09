@@ -20,8 +20,7 @@
 
 
 from boltkit.client import Connection
-from boltkit.server.scripting import BoltScript
-from boltkit.server.stub import stub_test, BoltStubService
+from boltkit.server.stub import BoltStubService
 
 
 def script(*paths):
