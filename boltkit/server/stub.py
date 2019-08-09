@@ -26,7 +26,8 @@ from threading import Thread
 
 from boltkit.addressing import Address
 from boltkit.packstream import PackStream
-from boltkit.server.scripting import ServerExit, ClientMessageMismatch, BoltScript
+from boltkit.server.scripting import ServerExit, ClientMessageMismatch, BoltScript, \
+    ClientMessageLine
 
 
 log = getLogger("boltkit")
@@ -200,6 +201,7 @@ class BoltActor:
                 error.script = self.script
                 error.line_no = line.line_no
                 raise
+        await ClientMessageLine.default_action(self)
 
     def log(self, text, *args):
         log.debug("[#%04X]  " + text, self.server_address.port_number, *args)

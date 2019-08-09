@@ -19,7 +19,7 @@
 # limitations under the License.
 
 
-from asyncio import sleep
+from asyncio import sleep, IncompleteReadError
 from json import JSONDecoder
 from textwrap import wrap
 
@@ -395,34 +395,52 @@ class ClientMessageLine(ClientLine):
         return "C: %s %s" % (self.tag_name, " ".join(map(repr, self.fields)))
 
     async def action(self, actor):
+        await self.default_action(actor, self)
+
+    @classmethod
+    async def default_action(cls, actor, line=None):
         # TODO: improve the flow of logic here
+        script = actor.script
         request = None
         c_msg = None
         more = True
         while more:
-            request = await actor.stream.read_message()
-            tag = self.script.tag_name("C", request.tag)
+            try:
+                request = await actor.stream.read_message()
+            except IncompleteReadError as error:
+                if not line and error.expected == 2 and error.partial == b"":
+                    # Likely failed reading a new chunk header, and we're not
+                    # waiting for anything specific anyway, so just exit quietly.
+                    return
+                else:
+                    raise
+            tag = script.tag_name("C", request.tag)
             c_msg = ClientMessageLine(tag, *request.fields)
-            c_msg.script = self.script
-            if self.script.auto_match(request.tag):
+            c_msg.script = script
+            if script.auto_match(request.tag):
                 # Auto-matched
                 actor.log("(AUTO) %s", c_msg)
-                for response in self.script.on_auto_match(request):
-                    tag = self.script.tag_name("S", response.tag)
+                for response in script.on_auto_match(request):
+                    tag = script.tag_name("S", response.tag)
                     s_msg = ServerMessageLine(tag, *response.fields)
-                    s_msg.script = self.script
+                    s_msg.script = script
                     actor.log("(AUTO) %s", s_msg)
                     actor.stream.write_message(response)
                 await actor.stream.drain()
             else:
                 more = False
-        if self.match(request):
+        if line and line.match(request):
             actor.log("%s", c_msg)
         else:
             actor.log("%s", c_msg)
-            raise ClientMessageMismatch("Script mismatch\n"
-                                        "Expected | {}\n"
-                                        "Received | {}".format(self, c_msg), self, c_msg)
+            if line:
+                raise ClientMessageMismatch("Script mismatch\n"
+                                            "Expected | {}\n"
+                                            "Received | {}".format(line, c_msg), line, c_msg)
+            else:
+                raise ClientMessageMismatch("Script mismatch\n"
+                                            "Expected | (no more lines)\n"
+                                            "Received | {}".format(c_msg), None, c_msg)
 
     def match(self, message):
         tag = self.script.tag("C", self.tag_name)
