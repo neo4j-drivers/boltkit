@@ -131,7 +131,8 @@ class BoltScript:
                 elif tag in {"BOLT", "NEO4J"}:
                     metadata["version"] = tuple(map(int, str(fields[0]).split(".")))
                 elif tag == "HANDSHAKE":
-                    metadata["handshake_data"] = bytearray(int(_, 16) for _ in wrap(fields[0], 2))
+                    data = bytearray(int(_, 16) for _ in wrap("".join(map(str, fields)), 2))
+                    metadata["handshake_data"] = data
                 elif tag == "PORT":
                     metadata["port"] = fields[0]
                 else:
@@ -146,8 +147,8 @@ class BoltScript:
                         out.append(ServerExitLine())
                         out[-1].line_no = line_no
                     elif tag == "<RAW>":
-                        out.append(ServerRawBytesLine(bytearray(int(_, 16)
-                                                                for _ in wrap(fields[0], 2))))
+                        data = bytearray(int(_, 16) for _ in wrap("".join(map(str, fields)), 2))
+                        out.append(ServerRawBytesLine(data))
                         out[-1].line_no = line_no
                     elif tag == "<SLEEP>":
                         out.append(ServerSleepLine(fields[0]))
