@@ -22,7 +22,7 @@
 from asyncio import new_event_loop, start_server, sleep, CancelledError, ensure_future, \
     set_event_loop
 from logging import getLogger
-from threading import Thread
+from threading import Event, Thread
 
 from boltkit.addressing import Address
 from boltkit.packstream import PackStream
@@ -54,8 +54,7 @@ class BoltStubService:
             listen_addr = Address(("localhost", self.default_base_port))
         self.exit_on_disconnect = exit_on_disconnect
         self.timeout = timeout or self.default_timeout
-        self.loop = new_event_loop()
-        self.loop.set_debug(True)
+        self.loop = None
         self.sleeper = None
         self.host = listen_addr.host
         self.next_free_port = listen_addr.port_number
@@ -69,61 +68,72 @@ class BoltStubService:
             self.scripts[address.port_number] = script
         self.servers = {}
         self.exit_code = 0
+        self.started = Event()
 
-    def __enter__(self):
+    async def __aenter__(self):
         self.start()
+        await self.wait_started()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.stop()
-        self.wait_stopped()
+        await self.wait_stopped()
 
     @property
     def addresses(self):
         return sorted(Address((self.host, port)) for port in self.scripts)
 
+    @property
+    def primary_address(self):
+        return self.addresses[0]
+
     def start(self):
         if self.thread and self.thread.is_alive():
             raise RuntimeError("Already running")
-        try:
-            self._start_servers()
-        except KeyboardInterrupt:
-            self.exit_code = 130
-            self._stop_servers()
-        else:
-            self.thread = Thread(target=self._serve, daemon=True)
-            self.thread.start()
+        self.thread = Thread(target=self._run, daemon=True)
+        self.thread.start()
 
     def stop(self):
         if self.sleeper:
             self.loop.call_soon_threadsafe(self.sleeper.cancel)
             self.sleeper = None
 
-    def wait_stopped(self):
+    async def wait_started(self):
+        if self.thread and self.thread.is_alive():
+            self.started.wait()
+
+    async def wait_stopped(self):
         if self.thread and self.thread.is_alive():
             self.thread.join()
 
-    def _start_servers(self):
+    async def _start_servers(self):
         self.servers.clear()
         for port_number, script in self.scripts.items():
             address = Address((self.host, port_number))
-            server = self.loop.run_until_complete(
-                start_server(self._handshake, host=self.host, port=port_number))
+            server = await start_server(self._handshake, host=self.host, port=port_number)
             log.debug("[#%04X]  S: <LISTEN> %s (%s)", port_number, address, script.filename)
             self.servers[port_number] = server
+        self.started.set()
 
-    def _stop_servers(self):
+    async def _stop_servers(self):
         for server in self.servers.values():
             server.close()
-            self.loop.run_until_complete(server.wait_closed())
+            await server.wait_closed()
+
+    def _run(self):
+        self.loop = new_event_loop()
+        self.loop.set_debug(True)
+        set_event_loop(self.loop)
+        self.loop.run_until_complete(self._a_run())
         self.loop.stop()
         self.loop.close()
+        self.loop = None
 
-    def _serve(self):
-        set_event_loop(self.loop)
+    async def _a_run(self):
         try:
-            self.sleeper = ensure_future(sleep(self.timeout, loop=self.loop), loop=self.loop)
-            self.loop.run_until_complete(self.sleeper)
+            await self._start_servers()
+            self.sleeper = ensure_future(sleep(self.timeout))
+            await self.sleeper
         except CancelledError:
             pass
         except KeyboardInterrupt:
@@ -132,7 +142,7 @@ class BoltStubService:
             print("Timed out after {!r}s".format(self.timeout))
             self.exit_code = 99
         finally:
-            self._stop_servers()
+            await self._stop_servers()
 
     async def _handshake(self, reader, writer):
         client_address = Address(writer.transport.get_extra_info("peername"))
@@ -208,23 +218,3 @@ class BoltActor:
 
     def log_error(self, text, *args):
         log.error("[#%04X]  " + text, self.server_address.port_number, *args)
-
-
-def stub_test(*scripts):
-    """ Decorator for stub tests.
-    """
-    def f__(f):
-        def f_(*args, **kwargs):
-            s = map(BoltScript.load, scripts)
-            service = BoltStubService(*s, timeout=5)
-            service.start()
-            kwargs["server"] = service
-            yield f(*args, **kwargs)
-            service.wait_stopped()
-            if service.exit_code != 0:
-                assert False, "Stub test failed with exit code {}".format(service.exit_code)
-        f_.__name__ = f.__name__
-        f_.__doc__ = f.__doc__
-        f_.__dict__.update(f.__dict__)
-        return f_
-    return f__

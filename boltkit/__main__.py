@@ -17,8 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
+from asyncio import get_event_loop
 from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
 from subprocess import run
@@ -148,19 +147,27 @@ useful for Bolt client integration testing.
               help="Show more detail about the client-server exchange.")
 @click.argument("script", nargs=-1)
 def stub(script, listen_addr, timeout):
-    scripts = map(BoltScript.load, script)
-    service = BoltStubService(*scripts, listen_addr=listen_addr, timeout=timeout)
+
+    async def a():
+        scripts = map(BoltScript.load, script)
+        service = BoltStubService(*scripts, listen_addr=listen_addr, timeout=timeout)
+        try:
+            service.start()
+            await service.wait_started()
+        finally:
+            await service.wait_stopped()
+        return service.exit_code
+
     try:
-        service.start()
+        loop = get_event_loop()
+        exit_code = loop.run_until_complete(a())
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
     else:
-        exit(service.exit_code)
-    finally:
-        service.wait_stopped()
+        exit(exit_code)
 
 
 @bolt.command(help="""\
