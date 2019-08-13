@@ -94,7 +94,7 @@ class BoltStubService:
         self.thread.start()
 
     def stop(self):
-        if self.sleeper:
+        if self.loop and self.sleeper:
             self.loop.call_soon_threadsafe(self.sleeper.cancel)
             self.sleeper = None
 
@@ -172,10 +172,9 @@ class BoltStubService:
             print("{}: {}".format(error.__class__.__name__, error))
             self.exit_code = 2
         finally:
+            log.debug("[#%04X]  S: <HANGUP>", server_address.port_number)
             try:
-                log.debug("[#%04X]  S: <HANGUP>", server_address.port_number)
                 writer.write_eof()
-                writer.close()
             except OSError:
                 pass
             await self._on_disconnect(server_address.port_number)
