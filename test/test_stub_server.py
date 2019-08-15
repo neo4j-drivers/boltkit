@@ -19,7 +19,10 @@
 # limitations under the License.
 
 
+from pytest import mark, raises
+
 from boltkit.client import Connection
+from boltkit.server.scripting import ScriptMismatch
 from boltkit.server.stub import BoltStubService
 
 
@@ -29,9 +32,10 @@ def script(*paths):
     return join(dirname(import_module("test").__file__), "scripts", *paths)
 
 
-def test_v1():
+@mark.asyncio
+async def test_v1():
 
-    with BoltStubService.load(script("v1", "return_1_as_x.bolt")) as service:
+    async with BoltStubService.load(script("v1", "return_1_as_x.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:
@@ -48,9 +52,10 @@ def test_v1():
             assert cx.bolt_version == 1
 
 
-def test_v2():
+@mark.asyncio
+async def test_v2():
 
-    with BoltStubService.load(script("v2", "return_1_as_x.bolt")) as service:
+    async with BoltStubService.load(script("v2", "return_1_as_x.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:
@@ -67,9 +72,10 @@ def test_v2():
             assert cx.bolt_version == 2
 
 
-def test_v3():
+@mark.asyncio
+async def test_v3():
 
-    with BoltStubService.load(script("v3", "return_1_as_x.bolt")) as service:
+    async with BoltStubService.load(script("v3", "return_1_as_x.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:
@@ -86,9 +92,26 @@ def test_v3():
             assert cx.bolt_version == 3
 
 
-def test_v4():
+@mark.asyncio
+async def test_v3_mismatch():
 
-    with BoltStubService.load(script("v4", "return_1_as_x.bolt")) as service:
+    async with BoltStubService.load(script("v3", "return_1_as_x.bolt")) as service:
+
+        # Given
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
+
+            # When
+            records = []
+            cx.run("RETURN $x", {"x": 2})
+            cx.send_all()
+            with raises(ScriptMismatch):
+                cx.fetch_all()
+
+
+@mark.asyncio
+async def test_v4():
+
+    async with BoltStubService.load(script("v4", "return_1_as_x.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:
@@ -105,9 +128,10 @@ def test_v4():
             assert cx.bolt_version == 4
 
 
-def test_v4_explicit():
+@mark.asyncio
+async def test_v4_explicit():
 
-    with BoltStubService.load(script("v4", "return_1_as_x_explicit.bolt")) as service:
+    async with BoltStubService.load(script("v4", "return_1_as_x_explicit.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:

@@ -26,7 +26,7 @@ from threading import Event, Thread
 
 from boltkit.addressing import Address
 from boltkit.packstream import PackStream
-from boltkit.server.scripting import ServerExit, ClientMessageMismatch, BoltScript, \
+from boltkit.server.scripting import ServerExit, ScriptMismatch, BoltScript, \
     ClientMessageLine
 
 
@@ -67,8 +67,8 @@ class BoltStubService:
                 self.next_free_port += 1
             self.scripts[address.port_number] = script
         self.servers = {}
-        self.exit_code = 0
         self.started = Event()
+        self._exception = None
 
     async def __aenter__(self):
         self.start()
@@ -105,6 +105,8 @@ class BoltStubService:
     async def wait_stopped(self):
         if self.thread and self.thread.is_alive():
             self.thread.join()
+            if self._exception:
+                raise self._exception
 
     async def _start_servers(self):
         self.servers.clear()
@@ -124,10 +126,15 @@ class BoltStubService:
         self.loop = new_event_loop()
         self.loop.set_debug(True)
         set_event_loop(self.loop)
-        self.loop.run_until_complete(self._a_run())
-        self.loop.stop()
-        self.loop.close()
-        self.loop = None
+        try:
+            self.loop.run_until_complete(self._a_run())
+        except Exception as e:
+            self._exception = e
+            raise
+        finally:
+            self.loop.stop()
+            self.loop.close()
+            self.loop = None
 
     async def _a_run(self):
         try:
@@ -136,11 +143,8 @@ class BoltStubService:
             await self.sleeper
         except CancelledError:
             pass
-        except KeyboardInterrupt:
-            self.exit_code = 130
         else:
-            print("Timed out after {!r}s".format(self.timeout))
-            self.exit_code = 99
+            raise TimeoutError("Timed out after {!r}s".format(self.timeout))
         finally:
             await self._stop_servers()
 
@@ -161,16 +165,8 @@ class BoltStubService:
             await actor.play()
         except ServerExit:
             pass
-        except ClientMessageMismatch as error:
-            print(error)
-            if error.line_no:
-                print("(in {!r} at line {})".format(error.script.filename, error.line_no))
-            else:
-                print("(in {!r})".format(error.script.filename))
-            self.exit_code = 1
-        except Exception as error:
-            print("{}: {}".format(error.__class__.__name__, error))
-            self.exit_code = 2
+        except Exception as e:
+            self._exception = e
         finally:
             log.debug("[#%04X]  S: <HANGUP>", server_address.port_number)
             try:
@@ -202,15 +198,21 @@ class BoltActor:
         return Address(self.writer.transport.get_extra_info("sockname"))
 
     async def play(self):
-        for line in self.script:
-            try:
-                await line.action(self)
-            except ClientMessageMismatch as error:
-                # Attach context information and re-raise
-                error.script = self.script
-                error.line_no = line.line_no
-                raise
-        await ClientMessageLine.default_action(self)
+        try:
+            for line in self.script:
+                try:
+                    await line.action(self)
+                except ScriptMismatch as error:
+                    # Attach context information and re-raise
+                    error.script = self.script
+                    error.line_no = line.line_no
+                    raise
+            await ClientMessageLine.default_action(self)
+        except (ConnectionError, OSError):
+            # It's likely the client has gone away, so we can
+            # safely drop out and silence the error. There's no
+            # point in flagging a broken client from a test helper.
+            return
 
     def log(self, text, *args):
         log.debug("[#%04X]  " + text, self.server_address.port_number, *args)

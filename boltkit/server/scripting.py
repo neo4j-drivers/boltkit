@@ -434,13 +434,11 @@ class ClientMessageLine(ClientLine):
         else:
             actor.log("%s", c_msg)
             if line:
-                raise ClientMessageMismatch("Script mismatch\n"
-                                            "Expected | {}\n"
-                                            "Received | {}".format(line, c_msg), line, c_msg)
+                raise ScriptMismatch("Expected «{}»\n"
+                                     "Received «{}»".format(line, c_msg), line, c_msg)
             else:
-                raise ClientMessageMismatch("Script mismatch\n"
-                                            "Expected | (no more lines)\n"
-                                            "Received | {}".format(c_msg), None, c_msg)
+                raise ScriptMismatch("Expected no more lines\n"
+                                     "Received «{}»".format(c_msg), None, c_msg)
 
     def match(self, message):
         tag = self.script.tag("C", self.tag_name)
@@ -503,7 +501,7 @@ class ServerExitLine(ServerLine):
         raise ServerExit()
 
 
-class ClientMessageMismatch(Exception):
+class ScriptMismatch(Exception):
 
     script = None
     line_no = None

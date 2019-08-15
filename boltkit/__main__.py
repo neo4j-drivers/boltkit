@@ -30,7 +30,7 @@ from boltkit.auth import AuthParamType, Auth
 from boltkit.client import Connection
 from boltkit.dist import Distributor
 from boltkit.server import Neo4jService, Neo4jDirectorySpec
-from boltkit.server.scripting import BoltScript
+from boltkit.server.scripting import BoltScript, ScriptMismatch
 from boltkit.server.stub import BoltStubService
 from boltkit.server.proxy import ProxyServer
 from boltkit.watcher import watch
@@ -155,19 +155,30 @@ def stub(script, listen_addr, timeout):
             service.start()
             await service.wait_started()
         finally:
-            await service.wait_stopped()
-        return service.exit_code
+            try:
+                await service.wait_stopped()
+            except ScriptMismatch as error:
+                extra = ""
+                if error.script.filename:
+                    extra += " in {!r}".format(error.script.filename)
+                if error.line_no:
+                    extra += " at line {}".format(error.line_no)
+                print("Script mismatch{}:\n{}".format(extra, error))
+                exit(1)
+            except TimeoutError as error:
+                print(error)
+                exit(2)
 
     try:
         loop = get_event_loop()
-        exit_code = loop.run_until_complete(a())
+        loop.run_until_complete(a())
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
-        exit(1)
+        exit(99)
     else:
-        exit(exit_code)
+        exit(0)
 
 
 @bolt.command(help="""\

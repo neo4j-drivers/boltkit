@@ -416,6 +416,8 @@ class Connection:
                   addresses, errors)
         raise OSError("Could not open connection")
 
+    closed = False
+
     def __init__(self, s, bolt_version, auth, user_agent=None):
         self.socket = s
         self.address = AddressList([self.socket.getpeername()])
@@ -461,8 +463,10 @@ class Connection:
         self.close()
 
     def close(self):
-        log.debug("Closing connection to «%s»", self.address)
-        self.socket.close()
+        if not self.closed:
+            log.debug("Closing connection to «%s»", self.address)
+            self.socket.close()
+            self.closed = True
 
     def reset(self):
         log.debug("C: RESET")
@@ -610,13 +614,13 @@ class Connection:
         """ Fetch all messages up to and including the next summary message.
         """
         response = self.responses[0]
-        while not response.complete:
+        while not response.complete and not self.closed:
             self.fetch_one()
 
     def fetch_all(self):
         """ Fetch all messages from all outstanding responses.
         """
-        while self.responses:
+        while self.responses and not self.closed:
             self.fetch_summary()
 
 
