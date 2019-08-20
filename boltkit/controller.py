@@ -55,6 +55,14 @@ CERT_FILE = "neo4j.cert"
 KEY_FILE = "neo4j.key"
 
 
+def _for_40_server():
+    return {
+        "dbms.ssl.policy.pem.bolt.base_directory": CERT_FOLDER,
+        "dbms.ssl.policy.pem.bolt.private_key": KEY_FILE,
+        "dbms.ssl.policy.pem.bolt.public_certificate": CERT_FILE
+    }
+
+
 def bstr(s):
     return s if isinstance(s, (bytes, bytearray)) else s.encode("UTF-8")
 
@@ -260,7 +268,7 @@ def create_self_signed_cert(cert_path, key_path):
     cert.gmtime_adj_notAfter(10*365*24*60*60)
     cert.set_issuer(cert.get_subject())
     cert.set_pubkey(key)
-    cert.sign(key, 'sha1')
+    cert.sign(key, 'SHA512')
 
     with open(cert_path, "wb") as cert_file:
         cert_file.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
@@ -285,14 +293,17 @@ class Controller(object):
     def install(cls, edition, version, path, **kwargs):
         package = cls.download(edition, version, path, **kwargs)
         home = cls.extract(package, path)
-
-        # By default we install a self-signed cert before server start.
-        try:
-            makedirs(path_join(home, CERT_FOLDER))
-        except OSError:
-            pass
-        create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
-                                path_join(home, CERT_FOLDER, KEY_FILE))
+        properties = config.common_config()
+        if version.startswith("4."):
+            # Install a self-signed cert before server start.
+            try:
+                makedirs(path_join(home, CERT_FOLDER))
+            except OSError:
+                pass
+            create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
+                                    path_join(home, CERT_FOLDER, KEY_FILE))
+            properties.update(_for_40_server())
+        config.update(home, properties)
         return realpath(home)
 
     @classmethod
