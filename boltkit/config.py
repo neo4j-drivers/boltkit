@@ -171,7 +171,6 @@ def common_config():
         "dbms.memory.pagecache.size": DEFAULT_PAGE_CACHE_MEMORY,
         "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
         "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY,
-        "dbms.connectors.default_advertised_address": "127.0.0.1",
         "dbms.backup.enabled": "false"
     }
 
