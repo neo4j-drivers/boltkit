@@ -106,7 +106,7 @@ class Neo4jMachineSpec:
         self.dir_spec = dir_spec
         self.debug_opts = debug_opts
         self.config = dict(self.config or {})
-        if debug_opts is not None:
+        if debug_opts.port is not None:
             self._add_debug_opts(debug_opts)
         self.config["dbms.connector.bolt.advertised_address"] = \
             "localhost:{}".format(self.bolt_port)
@@ -141,9 +141,10 @@ class Neo4jMachineSpec:
         return Address(("localhost", self.bolt_port))
 
     def _add_debug_opts(self, debug_opts):
-        suspend = "y" if debug_opts.suspend else "n"
-        self.config["dbms.jvm.additional"] = ("-agentlib:jdwp=transport=dt_socket,server=y,"
-                                              "suspend={},address={}".format(suspend, self.debug_port))
+        if debug_opts.port is not None:
+            suspend = "y" if debug_opts.suspend else "n"
+            self.config["dbms.jvm.additional"] = ("-agentlib:jdwp=transport=dt_socket,server=y,"
+                                                  "suspend={},address=0.0.0.0:{}".format(suspend, self.debug_port))
 
 
 class Neo4jCoreMachineSpec(Neo4jMachineSpec):
@@ -555,7 +556,10 @@ class Neo4jClusterService(Neo4jService):
 
     @classmethod
     def _port_range(cls, base_port, count):
-        return range(base_port, base_port + count)
+        if base_port is None:
+            return [None] * count
+        else:
+            return range(base_port, base_port + count)
 
     def __init__(self, name=None, image=None, auth=None,
                  n_cores=None, n_replicas=None,
@@ -579,15 +583,14 @@ class Neo4jClusterService(Neo4jService):
             bolt_port or self.default_bolt_port, self.max_cores)
         core_http_port_range = self._port_range(
             http_port or self.default_http_port, self.max_cores)
-        core_debug_port_range = self._port_range(
-            debug_port or self.default_debug_port, self.max_cores)
+        core_debug_port_range = self._port_range(debug_port, self.max_cores)
         self.free_core_machine_specs = [
             Neo4jCoreMachineSpec(
                 name=chr(97 + i),
                 service_name=self.name,
                 bolt_port=core_bolt_port_range[i],
                 http_port=core_http_port_range[i],
-                # Only suspend first machine in cluster, otherwise cluster won't form until debuggers
+                # Only suspend first core in cluster, otherwise cluster won't form until debuggers
                 # connect to all of them.
                 debug_opts=debug_opts_type(debug_suspend if i == 0 else False, core_debug_port_range[i]),
                 dir_spec=dir_spec,
@@ -604,15 +607,20 @@ class Neo4jClusterService(Neo4jService):
             ceil(core_bolt_port_range.stop / 10) * 10 + 1, self.max_replicas)
         replica_http_port_range = self._port_range(
             ceil(core_http_port_range.stop / 10) * 10 + 1, self.max_replicas)
-        replica_debug_port_range = self._port_range(
-            ceil(core_debug_port_range.stop / 10) * 10 + 1, self.max_replicas)
+        if debug_port:
+            replica_debug_port_range = self._port_range(
+                ceil(core_debug_port_range.stop / 10) * 10 + 1, self.max_replicas)
+        else:
+            replica_debug_port_range = self._port_range(None, self.max_replicas)
         self.free_replica_machine_specs = [
             Neo4jReplicaMachineSpec(
                 name=chr(49 + i),
                 service_name=self.name,
                 bolt_port=replica_bolt_port_range[i],
                 http_port=replica_http_port_range[i],
-                debug_opts=debug_opts_type(debug_suspend, replica_debug_port_range[i]),
+                # Only suspend first core in cluster, otherwise cluster won't form until debuggers
+                # connect to all of them.
+                debug_opts=debug_opts_type(debug_suspend if i == 0 else False, replica_debug_port_range[i]),
                 dir_spec=dir_spec,
                 config=config,
             )
