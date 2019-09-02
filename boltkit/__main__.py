@@ -271,6 +271,13 @@ passed. These are:
 @click.option("-C", "--config", type=ConfigParamType(), multiple=True,
               help="Pass a configuration value into neo4j.conf. This can be "
                    "used multiple times.")
+@click.option("-D", "--debug-port", type=int,
+              help="The port number (standalone) or base port number (cluster) "
+                   "for java remote debugging.")
+@click.option("-E", "--debug-suspend", is_flag=True,
+              help="Remote Neo4j server process should hang until a connection "
+                   "is made by a remote java debugger. This option is only "
+                   "valid if a debug port is specified with -D.")
 @click.option("-H", "--http-port", type=int,
               help="A port number (standalone) or base port number (cluster) "
                    "for HTTP traffic.")
@@ -309,8 +316,8 @@ passed. These are:
               help="Show more detail about the startup and shutdown process.")
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 def server(command, name, image, auth, n_cores, n_replicas,
-           bolt_port, http_port, import_dir, logs_dir,
-           plugins_dir, certificates_dir, config):
+           bolt_port, http_port, debug_port, debug_suspend, import_dir,
+           logs_dir, plugins_dir, certificates_dir, config):
     try:
         dir_spec = Neo4jDirectorySpec(
             import_dir=import_dir,
@@ -320,7 +327,7 @@ def server(command, name, image, auth, n_cores, n_replicas,
         )
         config_dict = dict(item.partition("=")[::2] for item in config)
         with Neo4jService(name, image, auth, n_cores, n_replicas,
-                          bolt_port, http_port, dir_spec, config_dict) as neo4j:
+                          bolt_port, http_port, debug_port, debug_suspend, dir_spec, config_dict) as neo4j:
             if command:
                 run(" ".join(map(shlex_quote, command)), shell=True,
                     env=neo4j.env())
@@ -329,6 +336,7 @@ def server(command, name, image, auth, n_cores, n_replicas,
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
+        raise
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 
