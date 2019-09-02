@@ -275,9 +275,9 @@ passed. These are:
               help="The port number (standalone) or base port number (cluster) "
                    "for java remote debugging.")
 @click.option("-E", "--debug-suspend", is_flag=True,
-              help="Remote Neo4j server process should hang until a connection "
-                   "is made by a remote java debugger. This option is only "
-                   "valid if a debug port is specified with -D.")
+              help="The first Neo4j server process (machine a) should hang "
+                   "until a connection is made by a remote java debugger. This "
+                   "option is only valid if a debug port is specified with -D.")
 @click.option("-H", "--http-port", type=int,
               help="A port number (standalone) or base port number (cluster) "
                    "for HTTP traffic.")
@@ -336,7 +336,6 @@ def server(command, name, image, auth, n_cores, n_replicas,
     except KeyboardInterrupt:
         exit(130)
     except Exception as e:
-        raise
         click.echo(" ".join(map(str, e.args)), err=True)
         exit(1)
 

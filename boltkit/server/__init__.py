@@ -587,7 +587,9 @@ class Neo4jClusterService(Neo4jService):
                 service_name=self.name,
                 bolt_port=core_bolt_port_range[i],
                 http_port=core_http_port_range[i],
-                debug_opts=debug_opts_type(debug_suspend, core_debug_port_range[i]),
+                # Only suspend first machine in cluster, otherwise cluster won't form until debuggers
+                # connect to all of them.
+                debug_opts=debug_opts_type(debug_suspend if i == 0 else False, core_debug_port_range[i]),
                 dir_spec=dir_spec,
                 config=dict(config or {}, **{
                     "causal_clustering.minimum_core_cluster_size_at_formation":
