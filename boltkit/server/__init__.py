@@ -536,7 +536,7 @@ class Neo4jStandaloneService(Neo4jService):
             spec,
             self.image,
             auth=self.auth,
-        )
+        )   
 
 
 class Neo4jClusterService(Neo4jService):
