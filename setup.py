@@ -45,6 +45,7 @@ package_metadata = {
         "click~=7.0",
         "docker",
         "urllib3<1.25,>=1.23",
+        'pyreadline>=2.1 ; platform_system=="Windows"',
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [
