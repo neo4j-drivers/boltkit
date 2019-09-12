@@ -30,8 +30,12 @@ from boltkit.addressing import AddressList
 # up/down arrow navigation. This should not be removed.
 #
 # noinspection PyUnresolvedReferences
-import readline
-
+try:
+    import readline
+except ModuleNotFoundError as e:
+    # readline is not available for windows 10
+    from pyreadline import Readline
+    readline = Readline()
 
 log = getLogger("boltkit")
 
