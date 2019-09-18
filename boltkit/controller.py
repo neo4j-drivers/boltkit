@@ -207,7 +207,7 @@ class Downloader(object):
             raise ValueError("Unknown format %r" % package_format)
         package = template % (edition, package_version, package_format)
 
-        package = self.download_s3(package) if edition == "enterprise" else self.download_dist(package)
+        package = self.download_s3(package) if len(version_parts) != 3 else self.download_dist(package)
         self.write("\r\n")
 
         return package
