@@ -17,6 +17,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import sys
+
 from asyncio import get_event_loop
 from logging import INFO, DEBUG
 from shlex import quote as shlex_quote
@@ -34,7 +36,6 @@ from boltkit.server.scripting import BoltScript, ScriptMismatch
 from boltkit.server.stub import BoltStubService
 from boltkit.server.proxy import ProxyServer
 from boltkit.watcher import watch
-
 
 class AddressParamType(click.ParamType):
 
@@ -117,7 +118,7 @@ def client(cypher, server_addr, auth, transaction, bolt_version):
                 click.echo("\t".join(map(str, record)))
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
-        exit(1)
+        sys.exit(1)
 
 
 @bolt.command(help="""\
@@ -164,21 +165,21 @@ def stub(script, listen_addr, timeout):
                 if error.line_no:
                     extra += " at line {}".format(error.line_no)
                 print("Script mismatch{}:\n{}".format(extra, error))
-                exit(1)
+                sys.exit(1)
             except TimeoutError as error:
                 print(error)
-                exit(2)
+                sys.exit(2)
 
     try:
         loop = get_event_loop()
         loop.run_until_complete(a())
     except KeyboardInterrupt:
-        exit(130)
+        sys.exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
-        exit(99)
+        sys.exit(99)
     else:
-        exit(0)
+        sys.exit(0)
 
 
 @bolt.command(help="""\
@@ -200,10 +201,10 @@ def dist():
             if name == r.name.upper():
                 click.echo(r.name)
     except KeyboardInterrupt:
-        exit(130)
+        sys.exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
-        exit(1)
+        sys.exit(1)
 
 
 @bolt.command(help="""\
@@ -230,10 +231,10 @@ def get(version, enterprise, s3, teamcity, windows):
         else:
             distributor.download(edition, version, package_format)
     except KeyboardInterrupt:
-        exit(130)
+        sys.exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
-        exit(1)
+        sys.exit(1)
 
 
 @bolt.command(context_settings={"ignore_unknown_options": True}, help="""\
@@ -334,10 +335,10 @@ def server(command, name, image, auth, n_cores, n_replicas,
             else:
                 neo4j.run_console()
     except KeyboardInterrupt:
-        exit(130)
+        sys.exit(130)
     except Exception as e:
         click.echo(" ".join(map(str, e.args)), err=True)
-        exit(1)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

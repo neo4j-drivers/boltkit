@@ -29,6 +29,7 @@ from random import choice
 from threading import Thread
 from time import monotonic, sleep
 
+import docker
 from docker import DockerClient
 from docker.errors import ImageNotFound
 
@@ -234,10 +235,14 @@ class Neo4jMachine:
     def start(self):
         log.info("Starting machine %r at "
                  "«%s»", self.spec.fq_name, self.addresses)
-        self.container.start()
-        self.container.reload()
-        self.ip_address = (self.container.attrs["NetworkSettings"]
-        ["Networks"][self.spec.service_name]["IPAddress"])
+        try:
+            self.container.start()
+            self.container.reload()
+            self.ip_address = (self.container.attrs["NetworkSettings"]
+                ["Networks"][self.spec.service_name]["IPAddress"])
+        except docker.errors.APIError as e:
+            log.info(e)
+
         log.debug("Machine %r has internal IP address "
                   "«%s»", self.spec.fq_name, self.ip_address)
 
