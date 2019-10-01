@@ -57,9 +57,9 @@ KEY_FILE = "neo4j.key"
 
 def _for_40_server():
     return {
-        "dbms.ssl.policy.pem.bolt.base_directory": CERT_FOLDER,
-        "dbms.ssl.policy.pem.bolt.private_key": KEY_FILE,
-        "dbms.ssl.policy.pem.bolt.public_certificate": CERT_FILE
+        "dbms.ssl.policy.bolt.base_directory": CERT_FOLDER,
+        "dbms.ssl.policy.bolt.private_key": KEY_FILE,
+        "dbms.ssl.policy.bolt.public_certificate": CERT_FILE
     }
 
 
