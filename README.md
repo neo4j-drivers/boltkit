@@ -33,11 +33,32 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
 ## <a name="installation"></a>Installation
 
 The package can either be installed globally or within a *virtualenv*.
+
 Installation makes available several command line tools, the names of which all start with either `bolt` or `neoctrl`.
+
 ```
 pip install --upgrade boltkit
 ```
 
+Install into user space for python 3:
+```
+python3 -m pip install --user --upgrade boltkit
+```
+
+Check installed version on user space for python 3:
+```
+python3 -m pip freeze --user
+```
+
+Install into user space for python 3 directly from github repo:
+```
+python3 -m pip install --user https://github.com/neo4j-drivers/boltkit@1.3#egg=boltkit
+```
+
+Install into user space for python 3 directly from local clone with edit mode:
+```
+python3 -m pip install --editable --user <path/to/neo4j-drivers/boltkit>
+```
 
 ## <a name="demo-driver"></a>Demo Driver 
 
