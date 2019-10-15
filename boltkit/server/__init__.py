@@ -281,7 +281,7 @@ class Neo4jMachine:
             for line in self.container.logs().splitlines():
                 log.error("> %s" % line.decode("utf-8"))
 
-    def stop(self, timeout):
+    def stop(self, timeout=None):
         log.info("Stopping machine %r", self.spec.fq_name)
         self.container.stop(timeout=timeout)
         self.container.remove(force=True)
@@ -404,11 +404,13 @@ class Neo4jService:
         else:
             return list(self.machines.values())
 
-    def readers(self, tx_context):
+    def readers(self, tx_context=None):
+        self.update_routing_info(tx_context, force=False)
         return list(map(self._get_machine_by_address,
                         self.routing_tables[tx_context].readers))
 
-    def writers(self, tx_context):
+    def writers(self, tx_context=None):
+        self.update_routing_info(tx_context, force=False)
         return list(map(self._get_machine_by_address,
                         self.routing_tables[tx_context].writers))
 
@@ -471,13 +473,16 @@ class Neo4jService:
                 container.remove(force=True)
         docker.networks.get(service_name).remove()
 
-    def update_routing_info(self, tx_context, force):
+    def update_routing_info(self, tx_context, *, force=False):
         if self._has_valid_routing_table(tx_context) and not force:
             return None
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             routing_context = {}
             records = []
             if cx.bolt_version >= 4:
+                if tx_context:
+                    raise ValueError("Multiple transaction contexts are not "
+                                     "available in Bolt {}".format(cx.bolt_version))
                 run = cx.run("CALL dbms.cluster.routing."
                              "getRoutingTable($rc, $tc)", {
                                  "rc": routing_context,
@@ -709,21 +714,11 @@ class Neo4jClusterService(Neo4jService):
             self.free_replica_machine_specs.append(spec)
 
     def remove(self, name):
-        """ Remove a server by name or role. Servers can be identified either
-        by their name (e.g. 'a', 'a.fbe340d') or by the role they fulfil
-        (e.g. 'r').
+        """ Remove a server by name (e.g. 'a', 'a.fbe340d').
         """
         found = 0
         for spec, machine in list(self.machines.items()):
-            if (name == "r" and self.readers is not None and
-                    machine in self.readers):
-                self._remove_machine(spec)
-                found += 1
-            elif (name == "w" and self.writers is not None and
-                  machine in self.writers):
-                self._remove_machine(spec)
-                found += 1
-            elif name in (spec.name, spec.fq_name):
+            if name in (spec.name, spec.fq_name):
                 self._remove_machine(spec)
                 found += 1
         return found
