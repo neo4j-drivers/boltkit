@@ -136,7 +136,7 @@ useful for Bolt client integration testing.
                    "for 'localhost'. Each script (which doesn't specify an "
                    "explicit port number) will use subsequent ports. If "
                    "completely omitted, this defaults to "
-                   "':17601'. The BOLT_LISTEN_ADDR environment variable may "
+                   "':17687'. The BOLT_LISTEN_ADDR environment variable may "
                    "be used as an alternative to this option. Scripts may also "
                    "specify their own explicit port numbers.")
 @click.option("-t", "--timeout", type=float,

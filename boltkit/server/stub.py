@@ -35,7 +35,7 @@ log = getLogger("boltkit")
 
 class BoltStubService:
 
-    default_base_port = 17601
+    default_base_port = 17687
 
     default_timeout = 30
 
