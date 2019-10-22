@@ -52,7 +52,7 @@ python3 -m pip freeze --user
 
 Install into user space for python 3 directly from github repo:
 ```
-python3 -m pip install --user https://github.com/neo4j-drivers/boltkit@1.3#egg=boltkit
+python3 -m pip install --user git+https://github.com/neo4j-drivers/boltkit@1.3#egg=boltkit
 ```
 
 Install into user space for python 3 directly from local clone with edit mode:
