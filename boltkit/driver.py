@@ -371,7 +371,7 @@ class Connection:
         return cx
 
     @classmethod
-    def open(cls, *addresses, auth, user_agent=None, bolt_versions=None,
+    def open(cls, *addresses, auth=None, user_agent=None, bolt_versions=None,
              timeout=0):
         """ Open a connection to a Bolt server. It is here that we create a
         low-level socket connection and carry out version negotiation.

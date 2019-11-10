@@ -61,6 +61,7 @@ server_agents = {
     4: "Neo4j/4.0.0",
 }
 
+default_bolt_version = 2
 
 def message_repr(v, message):
     name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == message.tag)
@@ -96,7 +97,7 @@ class ExitCommand(Item):
 class Script(object):
 
     def __init__(self, file_name=None):
-        self.bolt_version = 1
+        self.bolt_version = default_bolt_version
         self.auto = []
         self.lines = deque()
         if file_name:
