@@ -60,7 +60,13 @@ def update(path, properties):
                 value = properties[key]
                 if line.startswith(key + "=") or \
                         (line.startswith("#") and line[1:].lstrip().startswith(key + "=")):
-                    f_out.write("%s=%s\n" % (key, value))
+                    if value is None:
+                        if line.startswith("#"):
+                            f_out.write(line)
+                        else:
+                            f_out.write("#%s" % line)
+                    else:
+                        f_out.write("%s=%s\n" % (key, value))
 
                     del properties[key]
                     break
@@ -68,7 +74,8 @@ def update(path, properties):
                 f_out.write(line)
 
         for key, value in properties.items():
-            f_out.write("%s=%s\n" % (key, value))
+            if value is not None:
+                f_out.write("%s=%s\n" % (key, value))
 
 
 def extract_http_and_bolt_uris(path):
