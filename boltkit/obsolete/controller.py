@@ -45,7 +45,10 @@ except ImportError:
     from urllib2 import urlopen, Request, HTTPError
     from urlparse import urlparse
 
-from OpenSSL import crypto, SSL
+try:
+    from OpenSSL import crypto, SSL
+except ImportError:
+    crypto = None
 from socket import gethostname
 
 DIST_HOST = "dist.neo4j.org"
@@ -302,8 +305,9 @@ class Controller(object):
                 makedirs(path_join(home, CERT_FOLDER))
             except OSError:
                 pass
-            create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
-                                    path_join(home, CERT_FOLDER, KEY_FILE))
+            if crypto:
+                create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
+                                        path_join(home, CERT_FOLDER, KEY_FILE))
             properties.update(_for_40_server())
         config.update(home, properties)
         return realpath(home)
