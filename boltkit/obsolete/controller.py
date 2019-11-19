@@ -59,13 +59,17 @@ KEY_FILE = "neo4j.key"
 
 
 def _for_40_server():
-    return {
-        "dbms.ssl.policy.bolt.enabled": "true",
-        "dbms.ssl.policy.bolt.base_directory": CERT_FOLDER,
-        "dbms.ssl.policy.bolt.private_key": KEY_FILE,
-        "dbms.ssl.policy.bolt.public_certificate": CERT_FILE,
-        "dbms.ssl.policy.bolt.client_auth": "none",
-    }
+    if crypto:
+        return {
+            "dbms.ssl.policy.bolt.enabled": "true",
+            "dbms.ssl.policy.bolt.base_directory": CERT_FOLDER,
+            "dbms.ssl.policy.bolt.private_key": KEY_FILE,
+            "dbms.ssl.policy.bolt.public_certificate": CERT_FILE,
+            "dbms.ssl.policy.bolt.client_auth": "none",
+        }
+    else:
+        return {
+        }
 
 
 def bstr(s):
