@@ -36,7 +36,7 @@ import boto
 from boto.s3.key import Key
 from boto.s3.connection import OrdinaryCallingFormat
 
-import boltkit.config as config
+import boltkit.obsolete.config as config
 
 try:
     from urllib.request import urlopen, Request, HTTPError
