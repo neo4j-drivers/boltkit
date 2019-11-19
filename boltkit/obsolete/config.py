@@ -35,9 +35,11 @@ WRAPPER_CONF_FILE = "neo4j-wrapper.conf"
 
 HTTP_URI_SETTING = "dbms.connector.http.address" # setting name for 3.0
 HTTP_LISTEN_URI_SETTING = "dbms.connector.http.listen_address" # setting name starting from 3.1
+HTTP_ADVERTISED_URI_SETTING = "dbms.connector.http.advertised_address" # setting name starting from 4.0
 
 BOLT_URI_SETTING = "dbms.connector.bolt.address" # setting name for 3.0
 BOLT_LISTEN_URI_SETTING = "dbms.connector.bolt.listen_address" # setting name starting from 3.1
+BOLT_ADVERTISED_URI_SETTING = "dbms.connector.bolt.advertised_address" # setting name starting from 4.0
 
 WINDOWS_SERVICE_NAME_SETTING = "dbms.windows_service_name"
 
@@ -82,13 +84,13 @@ def extract_http_and_bolt_uris(path):
         if line.startswith("#"):
             continue
 
-        if HTTP_URI_SETTING in line or HTTP_LISTEN_URI_SETTING in line:
+        if HTTP_URI_SETTING in line or HTTP_LISTEN_URI_SETTING in line or HTTP_ADVERTISED_URI_SETTING in line:
             if http_uri is not None:
                 raise RuntimeError("Duplicated http uri configs found in %s" % config_file_path)
 
             http_uri = _parse_uri("http", line)
 
-        if BOLT_URI_SETTING in line or BOLT_LISTEN_URI_SETTING in line:
+        if BOLT_URI_SETTING in line or BOLT_LISTEN_URI_SETTING in line or BOLT_ADVERTISED_URI_SETTING in line:
             if bolt_uri is not None:
                 raise RuntimeError("Duplicated bolt uri configs found in %s" % config_file_path)
 
@@ -110,23 +112,26 @@ def for_core(expected_core_cluster_size, initial_discovery_members, discovery_li
         "causal_clustering.raft_listen_address": raft_listen_address,
         "dbms.connector.bolt.listen_address": bolt_listen_address,
         "dbms.connector.http.listen_address": http_listen_address,
-        "dbms.connector.https.listen_address": https_listen_address
+        "dbms.connector.https.listen_address": https_listen_address,
+        "dbms.connectors.default_advertised_address": "127.0.0.1"
     }
-    config.update(_common_config())
+    config.update(common_config())
     return config
 
 
 def for_read_replica(initial_discovery_members, bolt_listen_address, http_listen_address, https_listen_address,
-                     transaction_listen_address):
+                     transaction_listen_address, discovery_listen_address):
     config = {
         "dbms.mode": "READ_REPLICA",
         "causal_clustering.initial_discovery_members": initial_discovery_members,
         "dbms.connector.bolt.listen_address": bolt_listen_address,
         "dbms.connector.http.listen_address": http_listen_address,
         "dbms.connector.https.listen_address": https_listen_address,
-        "causal_clustering.transaction_listen_address": transaction_listen_address
+        "causal_clustering.transaction_listen_address": transaction_listen_address,
+        "causal_clustering.discovery_listen_address": discovery_listen_address,
+        "dbms.connectors.default_advertised_address": "127.0.0.1"
     }
-    config.update(_common_config())
+    config.update(common_config())
     return config
 
 
@@ -163,12 +168,11 @@ def _extract_windows_service_name_from(config_file):
     return service_name
 
 
-def _common_config():
+def common_config():
     return {
         "dbms.memory.pagecache.size": DEFAULT_PAGE_CACHE_MEMORY,
         "dbms.memory.heap.initial_size": DEFAULT_XMS_MEMORY,
         "dbms.memory.heap.max_size": DEFAULT_XMX_MEMORY,
-        "dbms.connectors.default_advertised_address": "127.0.0.1",
         "dbms.backup.enabled": "false"
     }
 
