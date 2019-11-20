@@ -1,4 +1,4 @@
-boto3
+boto
 certifi
 click~=7.0
 docker
