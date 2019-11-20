@@ -40,6 +40,7 @@ package_metadata = {
     },
     "packages": packages,
     "install_requires": [
+        "boto",
         "boto3",
         "certifi",
         "click~=7.0",
