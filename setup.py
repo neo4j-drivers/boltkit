@@ -24,7 +24,7 @@ from setuptools import setup, find_packages
 from boltkit.meta import package, version
 
 
-packages = find_packages(exclude=("test", "test.*", "boltkit.obsolete"))
+packages = find_packages(exclude=("test", "test.*"))
 package_metadata = {
     "name": package,
     "version": version,
