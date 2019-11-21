@@ -21,8 +21,6 @@ from os import getenv
 from xml.etree import ElementTree
 
 import certifi
-from docker import DockerClient
-from docker.errors import ImageNotFound
 from urllib3 import PoolManager, make_headers
 
 
@@ -44,9 +42,6 @@ teamcity_http = PoolManager(
         getenv("TEAMCITY_PASSWORD", ""),
     )),
 )
-
-
-docker = DockerClient.from_env(version="auto")
 
 
 def resolve_image(image):
@@ -95,6 +90,8 @@ def resolve_image(image):
 
 
 def load_image_from_file(name):
+    from docker import DockerClient
+    docker = DockerClient.from_env(version="auto")
     with open(name, "rb") as f:
         images = docker.images.load(f.read())
         image = images[0]
@@ -105,6 +102,9 @@ def pull_snapshot(edition, force):
     """ Ensure a local copy of the snapshot image is available. If 'force' is
     True, then a download will always happen, regardless of the local cache.
     """
+    from docker import DockerClient
+    from docker.errors import ImageNotFound
+    docker = DockerClient.from_env(version="auto")
     artifact = resolve_artifact_name(edition)
     if force:
         return download_snapshot_artifact(artifact)
@@ -151,6 +151,8 @@ def derive_image_tag(artifact_name):
 
 
 def download_snapshot_artifact(artifact):
+    from docker import DockerClient
+    docker = DockerClient.from_env(version="auto")
     log.info("Downloading {} from «{}»".format(
         artifact, snapshot_host))
     url = "{}/{}".format(snapshot_build_url, artifact)

@@ -29,10 +29,6 @@ from random import choice
 from threading import Thread
 from time import monotonic, sleep
 
-import docker
-from docker import DockerClient
-from docker.errors import ImageNotFound
-
 from boltkit.addressing import Address
 from boltkit.auth import Auth, make_auth
 from boltkit.client import AddressList, Connection
@@ -179,6 +175,8 @@ class Neo4jMachine:
     ready = 0
 
     def __init__(self, spec, image, auth):
+        from docker import DockerClient
+        from docker.errors import ImageNotFound
         self.spec = spec
         self.image = image
         self.address = Address(("localhost", self.spec.bolt_port))
@@ -233,14 +231,15 @@ class Neo4jMachine:
             self.image, self.addresses)
 
     def start(self):
+        from docker.errors import APIError
         log.info("Starting machine %r at "
                  "«%s»", self.spec.fq_name, self.addresses)
         try:
             self.container.start()
             self.container.reload()
             self.ip_address = (self.container.attrs["NetworkSettings"]
-                ["Networks"][self.spec.service_name]["IPAddress"])
-        except docker.errors.APIError as e:
+                               ["Networks"][self.spec.service_name]["IPAddress"])
+        except APIError as e:
             log.info(e)
 
         log.debug("Machine %r has internal IP address "
@@ -368,6 +367,7 @@ class Neo4jService:
                  n_cores=None, n_replicas=None,
                  bolt_port=None, http_port=None, debug_port=None,
                  debug_suspend=None, dir_spec=None, config=None):
+        from docker import DockerClient
         self.name = name or self._random_name()
         self.docker = DockerClient.from_env(version="auto")
         self.image = resolve_image(image or self.default_image)
@@ -466,6 +466,7 @@ class Neo4jService:
 
     @classmethod
     def find_and_stop(cls, service_name):
+        from docker import DockerClient
         docker = DockerClient.from_env(version="auto")
         for container in docker.containers.list(all=True):
             if container.name.endswith(".{}".format(service_name)):
