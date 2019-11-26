@@ -1,3 +1,4 @@
+
 # Boltkit
 
 Boltkit is a package of utilities for Neo4j driver authors.
@@ -60,18 +61,75 @@ $ bolt client "UNWIND range(1, 10) AS n RETURN n"
 
 ### `bolt dist`
 
-TODO
+The `bolt dist` command returns the currently available Neo4j releases.
 
+Synopsis:
+```
+$ bolt dist --help
+Usage: bolt dist [OPTIONS]
+
+  List available Neo4j releases
+
+Options:
+  --help  Show this message and exit.
+
+```
+
+Example:
+```
+$ bolt dist
+3.0.0
+3.0.1
+3.0.2
+...
+```
 
 ### `bolt get`
 
-TODO
+The `bolt get` command downloads a specified version of Neo4j. Note: in order to be able to 
+download from the S3 and TeamCity sources credentials are required.
 
+```
+Usage: bolt get [OPTIONS] VERSION
+
+  Download Neo4j.
+
+Options:
+  -e, --enterprise
+  -s, --s3
+  -t, --teamcity
+  -v, --verbose
+  -w, --windows
+  --help            Show this message and exit.
+```
+
+Example:
+```
+$ bolt get 3.5.12
+```
 
 ### `bolt proxy`
 
-TODO
+The `bolt proxy` command runs a proxy between the bolt client and server to
+intercept and display communication between them for debugging purposes.
 
+```
+Usage: bolt proxy [OPTIONS]
+
+  Run a Bolt proxy server.
+
+Options:
+  -l, --listen-addr ADDR
+  -s, --server-addr ADDR
+  -v, --verbose
+  --help                  Show this message and exit.
+
+```
+
+Example:
+```
+$ bolt proxy -l localhost:7777 -s localhost:7687
+```
 
 ### `bolt server`
 
