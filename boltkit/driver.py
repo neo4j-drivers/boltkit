@@ -66,7 +66,8 @@ Application Layer:
 from logging import getLogger
 from socket import socket, AF_INET, AF_INET6
 from struct import pack as raw_pack, unpack_from as raw_unpack
-from time import perf_counter, sleep
+from time import sleep
+from timeit import default_timer as timer
 
 # ...and we'll borrow some things from other modules
 from boltkit.addressing import AddressList
@@ -371,8 +372,7 @@ class Connection:
         return cx
 
     @classmethod
-    def open(cls, *addresses, auth=None, user_agent=None, bolt_versions=None,
-             timeout=0):
+    def open(cls, *addresses, **config):
         """ Open a connection to a Bolt server. It is here that we create a
         low-level socket connection and carry out version negotiation.
         Following this (and assuming success) a Connection instance will be
@@ -381,10 +381,11 @@ class Connection:
 
         Args:
             addresses: Tuples of host and port, such as ("127.0.0.1", 7687).
-            auth:
-            user_agent:
-            bolt_versions:
-            timeout:
+            config: keyword settings:
+                auth:
+                user_agent:
+                bolt_versions:
+                timeout:
 
         Returns:
             A connection to the Bolt server.
@@ -393,8 +394,12 @@ class Connection:
             ProtocolError: if the protocol version could not be negotiated.
         """
         addresses = AddressList(addresses or cls.default_address_list)
+        auth = config.get("auth")
+        user_agent = config.get("user_agent")
+        bolt_versions = config.get("bolt_versions")
+        timeout = config.get("timeout", 0)
         addresses.resolve()
-        t0 = perf_counter()
+        t0 = timer()
         bolt_versions = cls.fix_bolt_versions(bolt_versions)
         log.info("Trying to open connection to «%s»", addresses)
         errors = set()
@@ -409,7 +414,7 @@ class Connection:
                 else:
                     if cx:
                         return cx
-            again = perf_counter() - t0 < (timeout or 0)
+            again = timer() - t0 < (timeout or 0)
             if again:
                 sleep(wait)
                 wait *= 2
@@ -663,7 +668,7 @@ class QueryResponse(Response):
     # Can also be IGNORED (RUN, DISCARD_ALL)
 
     def __init__(self, bolt_version, records=None):
-        super().__init__(bolt_version)
+        super(QueryResponse, self).__init__(bolt_version)
         self.ignored = False
         self.records = records
 

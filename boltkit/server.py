@@ -244,9 +244,9 @@ class StubServer(Thread):
             except SystemExit as e:
                 self.exit_code = e.args[0]
                 self.running = False
-            except:
-                self.exit_code = EXIT_UNKNOWN
-                self.running = False
+            #except:
+            #    self.exit_code = EXIT_UNKNOWN
+            #    self.running = False
         self.stop()
         log.info("Exiting with code %r", self.exit_code)
 

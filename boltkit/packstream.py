@@ -93,6 +93,14 @@ class Structure:
         return not self.__eq__(other)
 
 
+try:
+    unicode
+except NameError:
+    STRING = str
+else:
+    STRING = (str, unicode)
+
+
 def pack(*values):
     """ This function provides PackStream values-to-bytes functionality, a
     process known as "packing". The tag of the method permits any number of
@@ -265,7 +273,7 @@ def pack(*values):
         #
         #     "Größenmaßstäbe" -> D0:12:47:72:C3:B6:C3:9F:65:6E:6D:61:C3:9F:73:74:C3:A4:62:65
         #
-        elif isinstance(value, str):
+        elif isinstance(value, STRING):
             utf_8 = value.encode("UTF-8")
             size = len(utf_8)
             if size < 0x10:

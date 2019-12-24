@@ -106,7 +106,7 @@ class AddressList(list):
             if not isinstance(item, tuple):
                 raise TypeError("Object {!r} is not a valid address "
                                 "(tuple expected)".format(item))
-        super().__init__(items)
+        super(AddressList, self).__init__(items)
 
     def __str__(self):
         return " ".join(str(Address(_)) for _ in self)
