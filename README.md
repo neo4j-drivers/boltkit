@@ -3,6 +3,12 @@
 Boltkit is a package of utilities for Neo4j driver authors.
 The library exposes a set of command line tools as well as a full Python API for working with Neo4j-compatible clients and servers.
 
+Supported Python Versions:
+
++ Python 3.8
++ Python 3.7
++ Python 3.6
++ Python 3.5
 
 ## Installation
 
