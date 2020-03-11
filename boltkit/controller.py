@@ -45,20 +45,22 @@ except ImportError:
     from urllib2 import urlopen, Request, HTTPError
     from urlparse import urlparse
 
-from OpenSSL import crypto, SSL
-from socket import gethostname
+from OpenSSL import crypto
+from os import rename
 
 DIST_HOST = "dist.neo4j.org"
 
-CERT_FOLDER = "certificates"  # Relative to neo4j_home
+CERT_DIR = "certificates"  # Relative to neo4j_home
 CERT_FILE = "neo4j.cert"
 KEY_FILE = "neo4j.key"
+
+HOME_DIR = "neo4jHome"
 
 
 def _for_40_server():
     return {
         "dbms.ssl.policy.bolt.enabled": "true",
-        "dbms.ssl.policy.bolt.base_directory": CERT_FOLDER,
+        "dbms.ssl.policy.bolt.base_directory": CERT_DIR,
         "dbms.ssl.policy.bolt.private_key": KEY_FILE,
         "dbms.ssl.policy.bolt.public_certificate": CERT_FILE
     }
@@ -292,19 +294,22 @@ class Controller(object):
 
     def install(self, edition, version, path, service_name, **kwargs):
         package = self.download(edition, version, path, **kwargs)
-        home = self.extract(package, path)
+        temp_home = self.extract(package, path)
+        home = path_join(path, HOME_DIR)
+        rename(temp_home, home)
         properties = config.common_config()
         if version.startswith("4."):
             # Install a self-signed cert before server start.
             try:
-                makedirs(path_join(home, CERT_FOLDER))
+                makedirs(path_join(home, CERT_DIR))
             except OSError:
                 pass
-            create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
-                                    path_join(home, CERT_FOLDER, KEY_FILE))
+            create_self_signed_cert(path_join(home, CERT_DIR, CERT_FILE),
+                                    path_join(home, CERT_DIR, KEY_FILE))
             properties.update(_for_40_server())
             properties.update(self.os_dependent_config(service_name))
         config.update(home, properties)
+
         self.install_service(home)
         return realpath(home)
 
@@ -605,6 +610,25 @@ def install():
     home = _install("enterprise" if parsed.enterprise else "community",
                     parsed.version, parsed.path, parsed.service_name, verbose=parsed.verbose)
     print(home)
+
+
+def install_service():
+    parser = ArgumentParser(
+        description="Install a Neo4j service.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-install-service $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
+    parsed = parser.parse_args()
+    if platform.system() == "Windows":
+        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
+    else:
+        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
+    controller.install_service(parsed.home)
 
 
 def start():

@@ -73,6 +73,9 @@ class Cluster:
     def stop(self, kill):
         self._foreach_cluster_member(self._cluster_member_kill if kill else self._cluster_member_stop)
 
+    def install_service(self):
+        self._foreach_cluster_member(self._cluster_member_install_service)
+
     def uninstall(self):
         self._foreach_cluster_member(self._cluster_member_uninstall)
 
@@ -166,6 +169,11 @@ class Cluster:
         controller.stop(True)
 
     @classmethod
+    def _cluster_member_install_service(cls, path):
+        controller = create_controller(path)
+        controller.install_service(path)
+
+    @classmethod
     def _cluster_member_uninstall(cls, path):
         controller = create_controller(path)
         controller.uninstall_service()
@@ -212,7 +220,8 @@ def cluster():
         "install": "Download, extract and configure causal cluster",
         "start": "Start the causal cluster located at the given path",
         "stop": "Stop the causal cluster located at the given path",
-        "uninstall": "Uninstall cluster from the system"
+        "uninstall": "Uninstall cluster from the system",
+        "install-service": "Install cluster as services on the system"
     }
 
     subparsers = parser.add_subparsers(title="available sub-commands", dest="command",
@@ -263,6 +272,14 @@ def cluster():
                              help="forcefully kill all instances in the cluster")
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
+    parser_install_service = subparsers.add_parser("install-service", epilog=see_download_command,
+                                             description=
+                                             sub_commands_with_description["install-service"] +
+                                             "\r\n\r\nexample:\r\n"
+                                             "  neoctrl-cluster install-service $HOME/cluster/",
+                                             formatter_class=RawDescriptionHelpFormatter)
+    parser_install_service.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
     parser_uninstall = subparsers.add_parser("uninstall", epilog=see_download_command,
                                              description=
                                              sub_commands_with_description["uninstall"] +
@@ -296,6 +313,10 @@ def _execute_cluster_command(parsed):
         print(cluster_info)
     elif command == "stop":
         cluster_ctrl.stop(parsed.kill)
+    elif command == "uninstall":
+        cluster_ctrl.uninstall()
+    elif command == "install-service":
+        cluster_ctrl.install_service()
     else:
         raise RuntimeError("Unknown command %s" % command)
 

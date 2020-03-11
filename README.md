@@ -17,6 +17,7 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
   - [`neoctrl-install`](#neo4j-controller/install)
   - [`neoctrl-start`](#neo4j-controller/start)
   - [`neoctrl-stop`](#neo4j-controller/stop)
+  - [`neoctrl-install-service`](#neo4j-controller/install-service)
   - [`neoctrl-uninstall`](#neo4j-controller/uninstall)
   - [`neoctrl-create-user`](#neo4j-controller/create-user)
   - [`neoctrl-configure`](#neo4j-controller/configure)
@@ -25,6 +26,7 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
   - [`neoctrl-cluster start`](#neo4j-controller/cluster-start)
   - [`neoctrl-cluster stop`](#neo4j-controller/cluster-stop)
   - [`neoctrl-cluster uninstall`](#neo4j-controller/cluster-uninstall)
+  - [`neoctrl-cluster install-service`](#neo4j-controller/cluster-install-service)
 ----
 
 
@@ -262,7 +264,7 @@ Report bugs to drivers@neo4j.com
 
 #### <a name="neo4j-controller/install"></a>`neoctrl-install`
 ```
-usage: neoctrl-install [-h] [-e] [-v] version [path]
+usage: neoctrl-install [-h] [-e] [-v] version [path] [service_name]
 
 Download and extract a Neo4j server package for the current platform.
 
@@ -319,6 +321,25 @@ optional arguments:
   -h, --help     show this help message and exit
   -v, --verbose  show more detailed output
   -k, --kill     forcefully kill the instance
+
+Report bugs to drivers@neo4j.com
+```
+
+#### <a name="neo4j-controller/install-service"></a>`neoctrl-install-service`
+```
+usage: neoctrl-install-service [-h] [-v] [home]
+
+Install a Neo4j as a service.
+
+example:
+  neoctrl-install-service $HOME/servers/neo4j-community-3.0.0
+
+positional arguments:
+  home           Neo4j server directory (default: .)
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
 
 Report bugs to drivers@neo4j.com
 ```
@@ -510,6 +531,26 @@ Uninstall the causal cluster located at the given path
 
 example:
   neoctrl-cluster uninstall $HOME/cluster/
+
+positional arguments:
+  path                  causal cluster location path (default: .)
+
+optional arguments:
+  -h, --help            show this help message and exit
+
+See neoctrl-download for details of supported environment variables.
+
+Report bugs to drivers@neo4j.com
+```
+
+#### <a name="neo4j-controller/cluster-install-service"></a>`neoctrl-cluster install-service`
+```
+usage: neoctrl-cluster install-service [-h] [path]
+
+Install the causal cluster located at the given path as services
+
+example:
+  neoctrl-cluster install-service $HOME/cluster/
 
 positional arguments:
   path                  causal cluster location path (default: .)
