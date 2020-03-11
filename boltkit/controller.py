@@ -290,10 +290,9 @@ class Controller(object):
         path = downloader.download(edition, version, cls.package_format)
         return realpath(path)
 
-    @classmethod
-    def install(cls, edition, version, path, **kwargs):
-        package = cls.download(edition, version, path, **kwargs)
-        home = cls.extract(package, path)
+    def install(self, edition, version, path, **kwargs):
+        package = self.download(edition, version, path, **kwargs)
+        home = self.extract(package, path)
         properties = config.common_config()
         if version.startswith("4."):
             # Install a self-signed cert before server start.
@@ -306,7 +305,7 @@ class Controller(object):
             properties.update(_for_40_server())
         config.update(home, properties)
 
-        cls.install_service(home)
+        self.install_service(home)
         return realpath(home)
 
     @classmethod
@@ -317,12 +316,11 @@ class Controller(object):
         self.home = home
         self.verbosity = verbosity
 
-    @classmethod
-    def install_service(cls, home):
-        pass
+    def install_service(self, home):
+        raise NotImplementedError("Not yet supported for this platform")
 
     def uninstall_service(self):
-        pass
+        raise NotImplementedError("Not yet supported for this platform")
 
     def start(self, timeout=0):
         raise NotImplementedError("Not yet supported for this platform")
@@ -421,6 +419,12 @@ class UnixController(Controller):
     def os_dependent_config(cls, instance_id):
         return {}
 
+    def install_service(self, home):
+        pass
+
+    def uninstall_service(self):
+        pass
+
     def start(self, timeout=0):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
         _invoke([path_join(self.home, "bin", "neo4j"), "start"])
@@ -467,8 +471,7 @@ class WindowsController(Controller):
     def os_dependent_config(cls, instance_id):
         return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
 
-    @classmethod
-    def install_service(cls, home):
+    def install_service(self, home):
         _invoke([path_join(home, "bin", "neo4j.bat"), "install-service"])
 
     def start(self, timeout=0):
