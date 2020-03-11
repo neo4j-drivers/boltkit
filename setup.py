@@ -27,7 +27,7 @@ except ImportError:
 packages = find_packages(exclude=("test", "test.*"))
 package_metadata = {
     "name": "boltkit",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "description": "Toolkit for Neo4j 3.0+ driver authors",
     "author": "Neo Technology",
     "author_email": "drivers@neo4j.com",
@@ -42,6 +42,7 @@ package_metadata = {
             "neoctrl-multicluster = boltkit.multicluster:multicluster",
             "neoctrl-start = boltkit.controller:start",
             "neoctrl-stop = boltkit.controller:stop",
+            "neoctrl-uninstall = boltkit.controller:uninstall",
             "neoctrl-set-initial-password = boltkit.controller:set_initial_password",
             "neoctrl-create-user = boltkit.controller:create_user",
             "neoctrl-configure = boltkit.controller:configure",

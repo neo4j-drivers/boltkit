@@ -17,16 +17,14 @@ Boltkit is a collection of tools and resources for Neo4j 3.0+ driver authors.
   - [`neoctrl-install`](#neo4j-controller/install)
   - [`neoctrl-start`](#neo4j-controller/start)
   - [`neoctrl-stop`](#neo4j-controller/stop)
+  - [`neoctrl-uninstall`](#neo4j-controller/uninstall)
   - [`neoctrl-create-user`](#neo4j-controller/create-user)
   - [`neoctrl-configure`](#neo4j-controller/configure)
 - [Cluster](#neo4j-controller/cluster)
   - [`neoctrl-cluster install`](#neo4j-controller/cluster-install)
   - [`neoctrl-cluster start`](#neo4j-controller/cluster-start)
   - [`neoctrl-cluster stop`](#neo4j-controller/cluster-stop)
-- [Multi-Cluster](#neo4j-controller/multicluster)
-  - [`neoctrl-multicluster install`](#neo4j-controller/multicluster-install)
-  - [`neoctrl-multicluster start`](#neo4j-controller/multicluster-start)
-  - [`neoctrl-multicluster stop`](#neo4j-controller/multicluster-stop)
+  - [`neoctrl-cluster uninstall`](#neo4j-controller/cluster-uninstall)
 ----
 
 
@@ -324,6 +322,25 @@ optional arguments:
 Report bugs to drivers@neo4j.com
 ```
 
+#### <a name="neo4j-controller/uninstall"></a>`neoctrl-uninstall`
+```
+usage: neoctrl-uninstall [-h] [-v] [home]
+
+Uninstall a Neo4j server instance.
+
+example:
+  neoctrl-uninstall $HOME/servers/neo4j-community-3.0.0
+
+positional arguments:
+  home           Neo4j server directory (default: .)
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --verbose  show more detailed output
+
+Report bugs to drivers@neo4j.com
+```
+
 #### <a name="neo4j-controller/create-user"></a>`neoctrl-create-user`
 ```
 usage: neoctrl-create-user [-h] [-v] [home] user password
@@ -484,97 +501,20 @@ See neoctrl-download for details of supported environment variables.
 Report bugs to drivers@neo4j.com
 ```
 
-### <a name="neo4j-controller/multicluster"></a>Multi-Cluster
+#### <a name="neo4j-controller/cluster-uninstall"></a>`neoctrl-cluster uninstall`
 ```
-usage: neoctrl-multicluster [-h] {install,start,stop} ...
+usage: neoctrl-cluster uninstall [-h] [path]
 
-Operate Neo4j multi-cluster.
-
-optional arguments:
-  -h, --help            show this help message and exit
-
-available sub-commands:
-  start                 Start the multi-cluster located at the given path
-  stop                  Stop the multi-cluster located at the given path
-  install               Download, extract and configure multi-cluster
-
-  {install,start,stop}  Commands are available
-
-See neoctrl-download for details of supported environment variables.
-```
-#### <a name="neo4j-controller/multicluster-install"></a>`neoctrl-multicluster install`
-```
-usage: neoctrl-multicluster install [-h] [--path PATH] -p PASSWORD [-v] -d
-                                    DATABASE
-                                    version
-
-Download, install and configure multi-cluster
-
-Example:
-  neoctrl-multicluster install 3.4.0 [--path $HOME/multi-cluster/] -p pAssw0rd [-v] -d '{"london": {"c": 3, "r": 2}, "malmo": {"c": 5, "i": 9001}}'
-
-positional arguments:
-  version               Neo4j server version
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --path PATH           download destination path (default: .)
-  -p PASSWORD, --password PASSWORD
-                        initial password of the initial admin user ('neo4j')
-                        for all cluster members
-  -v, --verbose         show more detailed output
-  -d DATABASE, --database DATABASE
-                        a json string describing the multi-cluster structure
-                        in the form of {database_name: {c:core_size,
-                        r:read_replica_size, i:initial_port},...} defaults:
-                        core_size=3, read_replia_size=0, initial_port=20000
-                        e.g. '{"london": {"c": 3, "r": 2}, "malmo": {"c": 5,
-                        "i": 9001}}'
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-#### <a name="neo4j-controller/multicluster-start"></a>`neoctrl-multicluster start`
-```
-usage: neoctrl-multicluster start [-h] [-v] [-t TIMEOUT] [path]
-
-Start the multi-cluster located at the given path
+Uninstall the causal cluster located at the given path
 
 example:
-  neoctrl-multicluster start [-v] $HOME/cluster/
+  neoctrl-cluster uninstall $HOME/cluster/
 
 positional arguments:
-  path                  multi-cluster location path (default: .)
+  path                  causal cluster location path (default: .)
 
 optional arguments:
   -h, --help            show this help message and exit
-  -v, --verbose         show more detailed output
-  -t TIMEOUT, --timeout TIMEOUT
-                        startup timeout for each cluster inside the
-                        multicluster in seconds (default: 180)
-
-See neoctrl-download for details of supported environment variables.
-
-Report bugs to drivers@neo4j.com
-```
-#### <a name="neo4j-controller/multicluster-stop"></a>`neoctrl-multicluster stop`
-```
-usage: neoctrl-multicluster stop [-h] [-v] [-k] [path]
-
-Stop the multi-cluster located at the given path
-
-example:
-  neoctrl-multicluster stop [-v] $HOME/cluster/
-
-positional arguments:
-  path           multi-cluster location path (default: .)
-
-optional arguments:
-  -h, --help     show this help message and exit
-  -v, --verbose  show more detailed output
-  -k, --kill     forcefully kill all instances in the multi-cluster. Default:
-                 false
 
 See neoctrl-download for details of supported environment variables.
 

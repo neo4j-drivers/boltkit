@@ -73,6 +73,9 @@ class Cluster:
     def stop(self, kill):
         self._foreach_cluster_member(self._cluster_member_kill if kill else self._cluster_member_stop)
 
+    def uninstall(self):
+        self._foreach_cluster_member(self._cluster_member_uninstall)
+
     def update_config(self, properties):
         self._foreach_cluster_member(lambda path: config.update(path, properties))
 
@@ -116,6 +119,7 @@ class Cluster:
             core_config.update(os_dependent_config)
 
             config.update(core_member_home, core_config)
+            controller.install_service(core_member_home)
 
         return initial_discovery_members
 
@@ -144,6 +148,7 @@ class Cluster:
             read_replica_config.update(os_dependent_config)
 
             config.update(read_replica_home, read_replica_config)
+            controller.install_service(read_replica_home)
 
     @classmethod
     def _cluster_member_start(cls, path):
@@ -159,6 +164,11 @@ class Cluster:
     def _cluster_member_kill(cls, path):
         controller = create_controller(path)
         controller.stop(True)
+
+    @classmethod
+    def _cluster_member_uninstall(cls, path):
+        controller = create_controller(path)
+        controller.uninstall_service()
 
     @classmethod
     def _cluster_member_set_initial_password(cls, path, password):
@@ -201,7 +211,8 @@ def cluster():
     sub_commands_with_description = {
         "install": "Download, extract and configure causal cluster",
         "start": "Start the causal cluster located at the given path",
-        "stop": "Stop the causal cluster located at the given path"
+        "stop": "Stop the causal cluster located at the given path",
+        "uninstall": "Uninstall cluster from the system"
     }
 
     subparsers = parser.add_subparsers(title="available sub-commands", dest="command",
@@ -251,6 +262,14 @@ def cluster():
     parser_stop.add_argument("-k", "--kill", action="store_true",
                              help="forcefully kill all instances in the cluster")
     parser_stop.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
+
+    parser_uninstall = subparsers.add_parser("uninstall", epilog=see_download_command,
+                                             description=
+                                             sub_commands_with_description["uninstall"] +
+                                             "\r\n\r\nexample:\r\n"
+                                             "  neoctrl-cluster uninstall $HOME/cluster/",
+                                             formatter_class=RawDescriptionHelpFormatter)
+    parser_uninstall.add_argument("path", nargs="?", default=".", help="causal cluster location path (default: .)")
 
     parsed = parser.parse_args()
     _execute_cluster_command(parsed)

@@ -60,8 +60,7 @@ def _for_40_server():
         "dbms.ssl.policy.bolt.enabled": "true",
         "dbms.ssl.policy.bolt.base_directory": CERT_FOLDER,
         "dbms.ssl.policy.bolt.private_key": KEY_FILE,
-        "dbms.ssl.policy.bolt.public_certificate": CERT_FILE,
-        "dbms.ssl.policy.bolt.client_auth": "none",
+        "dbms.ssl.policy.bolt.public_certificate": CERT_FILE
     }
 
 
@@ -306,6 +305,8 @@ class Controller(object):
                                     path_join(home, CERT_FOLDER, KEY_FILE))
             properties.update(_for_40_server())
         config.update(home, properties)
+
+        cls.install_service(home)
         return realpath(home)
 
     @classmethod
@@ -315,6 +316,13 @@ class Controller(object):
     def __init__(self, home, verbosity=0):
         self.home = home
         self.verbosity = verbosity
+
+    @classmethod
+    def install_service(cls, home):
+        pass
+
+    def uninstall_service(self):
+        pass
 
     def start(self, timeout=0):
         raise NotImplementedError("Not yet supported for this platform")
@@ -459,9 +467,13 @@ class WindowsController(Controller):
     def os_dependent_config(cls, instance_id):
         return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
 
+    @classmethod
+    def install_service(cls, home):
+        _invoke([path_join(home, "bin", "neo4j.bat"), "install-service"])
+
     def start(self, timeout=0):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
-        _invoke([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
+
         _invoke([path_join(self.home, "bin", "neo4j.bat"), "start"])
         if timeout:
             wait_for_server(http_uri.hostname, http_uri.port, timeout=timeout)
@@ -484,6 +496,7 @@ class WindowsController(Controller):
         else:
             _invoke([path_join(self.home, "bin", "neo4j.bat"), "stop"])
 
+    def uninstall_service(self):
         _invoke([path_join(self.home, "bin", "neo4j.bat"), "uninstall-service"])
 
     @classmethod
@@ -633,6 +646,25 @@ def stop():
     else:
         controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
     controller.stop(parsed.kill)
+
+
+def uninstall():
+    parser = ArgumentParser(
+        description="Uninstall a Neo4j server instance.\r\n"
+                    "\r\n"
+                    "example:\r\n"
+                    "  neoctrl-uninstall $HOME/servers/neo4j-community-3.0.0",
+        epilog="Report bugs to drivers@neo4j.com",
+        formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show more detailed output")
+    parser.add_argument("home", nargs="?", default=".", help="Neo4j server directory (default: .)")
+    parsed = parser.parse_args()
+    if platform.system() == "Windows":
+        controller = WindowsController(parsed.home, 1 if parsed.verbose else 0)
+    else:
+        controller = UnixController(parsed.home, 1 if parsed.verbose else 0)
+    controller.uninstall_service()
 
 
 def set_initial_password():
