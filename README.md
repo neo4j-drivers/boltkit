@@ -272,6 +272,7 @@ example:
 positional arguments:
   version           Neo4j server version
   path              download destination path (default: .)
+  service_name      set windows service name if specified (optional)
 
 optional arguments:
   -h, --help        show this help message and exit

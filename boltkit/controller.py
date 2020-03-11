@@ -290,7 +290,7 @@ class Controller(object):
         path = downloader.download(edition, version, cls.package_format)
         return realpath(path)
 
-    def install(self, edition, version, path, **kwargs):
+    def install(self, edition, version, path, service_name, **kwargs):
         package = self.download(edition, version, path, **kwargs)
         home = self.extract(package, path)
         properties = config.common_config()
@@ -303,13 +303,12 @@ class Controller(object):
             create_self_signed_cert(path_join(home, CERT_FOLDER, CERT_FILE),
                                     path_join(home, CERT_FOLDER, KEY_FILE))
             properties.update(_for_40_server())
+            properties.update(self.os_dependent_config(service_name))
         config.update(home, properties)
-
         self.install_service(home)
         return realpath(home)
 
-    @classmethod
-    def os_dependent_config(cls, instance_id):
+    def os_dependent_config(self, instance_id):
         raise NotImplementedError("Not yet supported for this platform")
 
     def __init__(self, home, verbosity=0):
@@ -415,8 +414,7 @@ class UnixController(Controller):
             files.extractall(path)
             return path_join(path, files.getnames()[0])
 
-    @classmethod
-    def os_dependent_config(cls, instance_id):
+    def os_dependent_config(self, instance_id):
         return {}
 
     def install_service(self, home):
@@ -467,8 +465,9 @@ class WindowsController(Controller):
             rootPath = firstName[0:firstName.find("/")]  # ZIP file system always has "/" as separator
             return path_join(path, rootPath)
 
-    @classmethod
-    def os_dependent_config(cls, instance_id):
+    def os_dependent_config(self, instance_id):
+        if instance_id is None:
+            return {}
         return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
 
     def install_service(self, home):
@@ -568,10 +567,10 @@ def download():
         print(home)
 
 
-def _install(edition, version, path, **kwargs):
+def _install(edition, version, path, service_name, **kwargs):
     controller = create_controller()
     try:
-        home = controller.install(edition, version.strip(), path, **kwargs)
+        home = controller.install(edition, version.strip(), path, service_name, **kwargs)
     except HTTPError as error:
         if error.code == 401:
             raise RuntimeError("Missing or incorrect authorization")
@@ -600,9 +599,11 @@ def install():
     parser.add_argument("version", help="Neo4j server version")
     parser.add_argument("path", nargs="?", default=".",
                         help="download destination path (default: .)")
+    parser.add_argument("service_name", nargs="?", default=None,
+                        help="set the windows service name to be this value. (optional)")
     parsed = parser.parse_args()
     home = _install("enterprise" if parsed.enterprise else "community",
-                    parsed.version, parsed.path, verbose=parsed.verbose)
+                    parsed.version, parsed.path, parsed.service_name, verbose=parsed.verbose)
     print(home)
 
 
