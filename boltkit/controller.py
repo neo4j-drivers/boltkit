@@ -459,10 +459,19 @@ class WindowsController(Controller):
     def os_dependent_config(cls, instance_id):
         return {config.WINDOWS_SERVICE_NAME_SETTING: instance_id}
 
+    def _start(self):
+        params = [path_join(self.home, "bin", "neo4j.bat"), "start"]
+        try:
+            _invoke(params)
+        except CalledProcessError:
+            # Try again to cover for weird prunsrv timeout when starting service.
+            # Remove this when investigated and solved!
+            _invoke(params)
+
     def start(self, timeout=0):
         http_uri, bolt_uri = config.extract_http_and_bolt_uris(self.home)
         _invoke([path_join(self.home, "bin", "neo4j.bat"), "install-service"])
-        _invoke([path_join(self.home, "bin", "neo4j.bat"), "start"])
+        self._start()
         if timeout:
             wait_for_server(http_uri.hostname, http_uri.port, timeout=timeout)
         return InstanceInfo(http_uri, bolt_uri, self.home)
@@ -565,7 +574,6 @@ def _install(edition, version, path, **kwargs):
             raise
     else:
         return home
-
 
 def install():
     parser = ArgumentParser(
