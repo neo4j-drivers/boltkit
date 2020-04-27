@@ -49,7 +49,7 @@ async def test_v1():
 
             # Then
             assert records == [[1]]
-            assert cx.bolt_version == 1
+            assert cx.bolt_version == (1, 0)
 
 
 @mark.asyncio
@@ -69,7 +69,7 @@ async def test_v2():
 
             # Then
             assert records == [[1]]
-            assert cx.bolt_version == 2
+            assert cx.bolt_version == (2, 0)
 
 
 @mark.asyncio
@@ -89,27 +89,28 @@ async def test_v3():
 
             # Then
             assert records == [[1]]
-            assert cx.bolt_version == 3
+            assert cx.bolt_version == (3, 0)
 
 
 @mark.asyncio
 async def test_v3_mismatch():
 
-    async with BoltStubService.load(script("v3", "return_1_as_x.bolt")) as service:
+    with raises(ScriptMismatch):
 
-        # Given
-        with Connection.open(*service.addresses, auth=service.auth) as cx:
+        async with BoltStubService.load(script("v3", "return_1_as_x.bolt")) as service:
 
-            # When
-            records = []
-            cx.run("RETURN $x", {"x": 2})
-            cx.send_all()
-            with raises(ScriptMismatch):
+            # Given
+            with Connection.open(*service.addresses, auth=service.auth) as cx:
+
+                # When
+                records = []
+                cx.run("RETURN $x", {"x": 2})
+                cx.send_all()
                 cx.fetch_all()
 
 
 @mark.asyncio
-async def test_v4():
+async def test_v4x0():
 
     async with BoltStubService.load(script("v4", "return_1_as_x.bolt")) as service:
 
@@ -125,11 +126,11 @@ async def test_v4():
 
             # Then
             assert records == [[1]]
-            assert cx.bolt_version == 4
+            assert cx.bolt_version == (4, 0)
 
 
 @mark.asyncio
-async def test_v4_explicit():
+async def test_v4x0_explicit():
 
     async with BoltStubService.load(script("v4", "return_1_as_x_explicit.bolt")) as service:
 
@@ -147,4 +148,4 @@ async def test_v4_explicit():
 
             # Then
             assert records == [[1]]
-            assert cx.bolt_version == 4
+            assert cx.bolt_version == (4, 0)

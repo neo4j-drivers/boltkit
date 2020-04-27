@@ -21,7 +21,7 @@
 
 from unittest import TestCase
 
-from boltkit.client import Connection
+from boltkit.client import Connection, SERVER
 from boltkit.server import Neo4jService
 
 
@@ -30,4 +30,4 @@ class ClientServerTestCase(TestCase):
     def test_connect_and_disconnect(self):
         with Neo4jService() as neo4j:
             with Connection.open(*neo4j.addresses, auth=neo4j.auth) as cx:
-                self.assertEqual(cx.bolt_version, 3)
+                self.assertIn(cx.bolt_version, list(SERVER.keys()))

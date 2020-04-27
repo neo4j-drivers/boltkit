@@ -480,10 +480,10 @@ class Neo4jService:
         with Connection.open(*self.addresses, auth=self.auth) as cx:
             routing_context = {}
             records = []
-            if cx.bolt_version >= 4:
+            if cx.bolt_version >= (4, 0):
                 if tx_context:
                     raise ValueError("Multiple transaction contexts are not "
-                                     "available in Bolt {}".format(cx.bolt_version))
+                                     "available in Bolt %s" % ".".join(map(str, cx.bolt_version)))
                 run = cx.run("CALL dbms.cluster.routing."
                              "getRoutingTable($rc, $tc)", {
                                  "rc": routing_context,

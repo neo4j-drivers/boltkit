@@ -116,9 +116,8 @@ BOLT = b"\x60\x60\xB0\x17"
 # PackStream structure with a unique tag byte.
 #
 # The client sends messages from the selection below:
-MAX_BOLT_VERSION = 4
-CLIENT = [None] * (MAX_BOLT_VERSION + 1)
-CLIENT[1] = {
+CLIENT = {}
+CLIENT[(1, 0)] = {
     "INIT": 0x01,           # INIT <user_agent> <auth_token>
                             # -> SUCCESS - connection initialised
                             # -> FAILURE - init failed, disconnect (reconnect to retry)
@@ -174,8 +173,8 @@ CLIENT[1] = {
                             #
                             # TODO
 }
-CLIENT[2] = CLIENT[1]
-CLIENT[3] = {
+CLIENT[(2, 0)] = CLIENT[(1, 0)]
+CLIENT[(3, 0)] = {
     "HELLO": 0x01,          # HELLO <headers>
                             # -> SUCCESS - connection initialised
                             # -> FAILURE - init failed, disconnect (reconnect to retry)
@@ -233,7 +232,7 @@ CLIENT[3] = {
                             #
                             # TODO
 }
-CLIENT[4] = {
+CLIENT[(4, 0)] = {
     "HELLO": 0x01,          # HELLO <headers>
                             # -> SUCCESS - connection initialised
                             # -> FAILURE - init failed, disconnect (reconnect to retry)
@@ -293,14 +292,12 @@ CLIENT[4] = {
 }
 #
 # The server responds with one or more of these for each request:
-SERVER = [None] * (MAX_BOLT_VERSION + 1)
-SERVER[1] = {
+SERVER = {v: {
     "SUCCESS": 0x70,            # SUCCESS <metadata>
     "RECORD": 0x71,             # RECORD <value>
     "IGNORED": 0x7E,            # IGNORED <metadata>
     "FAILURE": 0x7F,            # FAILURE <metadata>
-}
-SERVER[4] = SERVER[3] = SERVER[2] = SERVER[1]
+} for v in CLIENT}
 
 
 # This module logs entirely at debug level
@@ -333,14 +330,9 @@ class Connection:
         """
         # Establish which protocol versions we want to attempt to use
         if not bolt_versions:
-            bolt_versions = sorted([v for v, x in enumerate(CLIENT)
-                                    if x is not None], reverse=True)
-        # Raise an error if we're including any non-supported versions
-        if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
-            raise ValueError("This client does not support all "
-                             "Bolt versions in %r" % bolt_versions)
+            bolt_versions = sorted(CLIENT.keys(), reverse=True)
         # Ensure we send exactly 4 versions, padding with zeroes if necessary
-        return tuple(list(bolt_versions) + [0, 0, 0, 0])[:4]
+        return tuple(list(bolt_versions) + [(0, 0), (0, 0), (0, 0), (0, 0)])[:4]
 
     @classmethod
     def _open_to(cls, address, auth, user_agent, bolt_versions):
@@ -348,16 +340,16 @@ class Connection:
         socket address.
         """
         cx = None
-        handshake_data = BOLT + b"".join(raw_pack(UINT_32, version)
-                                         for version in bolt_versions)
+        handshake_data = BOLT + b"".join(bytearray([0, 0, minor, major])
+                                         for (major, minor) in bolt_versions)
         s = socket(family={2: AF_INET, 4: AF_INET6}[len(address)])
         try:
             s.connect(address)
             s.sendall(handshake_data)
-            raw_bolt_version = s.recv(4)
+            raw_bolt_version = bytearray(s.recv(4))
             if raw_bolt_version:
-                bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
-                if bolt_version > 0 and bolt_version in bolt_versions:
+                bolt_version = (raw_bolt_version[-1], raw_bolt_version[-2])
+                if bolt_version != (0, 0) and bolt_version in bolt_versions:
                     cx = cls(s, bolt_version, auth, user_agent)
                 else:
                     log.error("Could not negotiate protocol version "
@@ -422,8 +414,8 @@ class Connection:
         self.socket = s
         self.address = AddressList([self.socket.getpeername()])
         self.bolt_version = bolt_version
-        log.debug("Opened connection to «%s» using Bolt v%d",
-                  self.address, self.bolt_version)
+        log.debug("Opened connection to «%s» using Bolt %s",
+                  self.address, ".".join(map(str, self.bolt_version)))
         self.requests = []
         self.responses = []
         try:
@@ -432,7 +424,7 @@ class Connection:
             user, password = "neo4j", ""
         if user_agent is None:
             user_agent = self.default_user_agent()
-        if bolt_version >= 3:
+        if bolt_version >= (3, 0):
             args = {
                 "scheme": "basic",
                 "principal": user,
@@ -478,11 +470,12 @@ class Connection:
     def run(self, cypher, parameters=None, metadata=None):
         parameters = parameters or {}
         metadata = metadata or {}
-        if self.bolt_version >= 3:
+        if self.bolt_version >= (3, 0):
             log.debug("C: RUN %r %r %r", cypher, parameters, metadata)
             run = Structure(CLIENT[self.bolt_version]["RUN"], cypher, parameters, metadata)
         elif metadata:
-            raise ProtocolError("RUN metadata is not available in Bolt v%d" % self.bolt_version)
+            raise ProtocolError("RUN metadata is not available in "
+                                "Bolt %s" % ".".join(map(str, self.bolt_version)))
         else:
             log.debug("C: RUN %r %r", cypher, parameters)
             run = Structure(CLIENT[self.bolt_version]["RUN"], cypher, parameters)
@@ -500,7 +493,7 @@ class Connection:
         :return: :class:`.QueryResponse` object
         """
         v = self.bolt_version
-        if v >= 4:
+        if v >= (4, 0):
             args = {"n": n}
             if qid >= 0:
                 args["qid"] = qid
@@ -508,7 +501,7 @@ class Connection:
             self.requests.append(Structure(CLIENT[v]["DISCARD"], args))
         elif n >= 0 or qid >= 0:
             raise ProtocolError("Reactive DISCARD is not available in "
-                                "Bolt v%d" % v)
+                                "Bolt %s" % ".".join(map(str, self.bolt_version)))
         else:
             log.debug("C: DISCARD_ALL")
             self.requests.append(Structure(CLIENT[v]["DISCARD_ALL"]))
@@ -526,7 +519,7 @@ class Connection:
         :return: :class:`.QueryResponse` object
         """
         v = self.bolt_version
-        if v >= 4:
+        if v >= (4, 0):
             args = {"n": n}
             if qid >= 0:
                 args["qid"] = qid
@@ -534,7 +527,7 @@ class Connection:
             self.requests.append(Structure(CLIENT[v]["PULL"], args))
         elif n >= 0 or qid >= 0:
             raise ProtocolError("Reactive PULL is not available in "
-                                "Bolt v%d" % v)
+                                "Bolt %s" % ".".join(map(str, self.bolt_version)))
         else:
             log.debug("C: PULL_ALL")
             self.requests.append(Structure(CLIENT[v]["PULL_ALL"]))
@@ -544,31 +537,34 @@ class Connection:
 
     def begin(self, metadata=None):
         metadata = metadata or {}
-        if self.bolt_version >= 3:
+        if self.bolt_version >= (3, 0):
             log.debug("C: BEGIN %r", metadata)
             self.requests.append(Structure(CLIENT[self.bolt_version]["BEGIN"], metadata))
         else:
-            raise ProtocolError("BEGIN is not available in Bolt v%d" % self.bolt_version)
+            raise ProtocolError("BEGIN is not available in "
+                                "Bolt %s" % ".".join(map(str, self.bolt_version)))
         response = QueryResponse(self)
         self.responses.append(response)
         return response
 
     def commit(self):
-        if self.bolt_version >= 3:
+        if self.bolt_version >= (3, 0):
             log.debug("C: COMMIT")
             self.requests.append(Structure(CLIENT[self.bolt_version]["COMMIT"]))
         else:
-            raise ProtocolError("COMMIT is not available in Bolt v%d" % self.bolt_version)
+            raise ProtocolError("COMMIT is not available in "
+                                "Bolt %s" % ".".join(map(str, self.bolt_version)))
         response = QueryResponse(self)
         self.responses.append(response)
         return response
 
     def rollback(self):
-        if self.bolt_version >= 3:
+        if self.bolt_version >= (3, 0):
             log.debug("C: ROLLBACK")
             self.requests.append(Structure(CLIENT[self.bolt_version]["ROLLBACK"]))
         else:
-            raise ProtocolError("ROLLBACK is not available in Bolt v%d" % self.bolt_version)
+            raise ProtocolError("ROLLBACK is not available in "
+                                "Bolt %s" % ".".join(map(str, self.bolt_version)))
         response = QueryResponse(self)
         self.responses.append(response)
         return response

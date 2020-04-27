@@ -51,7 +51,7 @@ class BoltScript:
         elif version in {(3,), (3, 5), (3, 6)}:
             return super().__new__(Bolt3Script)
         elif version in {(4,), (4, 0)}:
-            return super().__new__(Bolt4Script)
+            return super().__new__(Bolt4x0Script)
         else:
             raise BoltScriptError("Unsupported version {}".format(version))
 
@@ -314,7 +314,7 @@ class Bolt3Script(BoltScript):
             yield Structure(b"\x70", {})
 
 
-class Bolt4Script(BoltScript):
+class Bolt4x0Script(BoltScript):
 
     protocol_version = (4, 0)
 
