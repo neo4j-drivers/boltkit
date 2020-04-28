@@ -290,6 +290,7 @@ CLIENT[(4, 0)] = {
                             #
                             # TODO
 }
+CLIENT[(4, 1)] = CLIENT[(4, 0)]
 #
 # The server responds with one or more of these for each request:
 SERVER = {v: {
@@ -353,7 +354,7 @@ class Connection:
                     cx = cls(s, bolt_version, auth, user_agent)
                 else:
                     log.error("Could not negotiate protocol version "
-                              "(outcome=%d)", bolt_version)
+                              "(outcome=%s)", ".".join(map(str, bolt_version)))
             else:
                 pass  # recv returned empty, peer closed connection
         finally:

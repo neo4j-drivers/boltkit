@@ -52,6 +52,8 @@ class BoltScript:
             return super().__new__(Bolt3Script)
         elif version in {(4,), (4, 0)}:
             return super().__new__(Bolt4x0Script)
+        elif version in {(4, 1)}:
+            return super().__new__(Bolt4x1Script)
         else:
             raise BoltScriptError("Unsupported version {}".format(version))
 
@@ -78,6 +80,16 @@ class BoltScript:
 
     def on_auto_match(self, request):
         raise NotImplementedError
+
+    def on_handshake(self, request):
+        handshake_data = self.handshake_data
+        if handshake_data is None:
+            handshake_data = bytearray()
+            for value in self.protocol_version:
+                handshake_data.insert(0, value)
+            while len(handshake_data) < 4:
+                handshake_data.insert(0, 0)
+        return bytes(handshake_data)
 
     @classmethod
     def tag(cls, role, name):
@@ -207,16 +219,6 @@ class Bolt1Script(BoltScript):
 
     server_agent = "Neo4j/3.3.0"
 
-    def on_handshake(self, request):
-        handshake_data = self.handshake_data
-        if handshake_data is None:
-            handshake_data = bytearray()
-            for value in self.protocol_version:
-                handshake_data.insert(0, value)
-            while len(handshake_data) < 4:
-                handshake_data.insert(0, 0)
-        return bytes(handshake_data)
-
     def on_auto_match(self, request):
         if request.tag == b"\x01":
             yield Structure(b"\x70", {
@@ -248,16 +250,6 @@ class Bolt2Script(BoltScript):
     }
 
     server_agent = "Neo4j/3.4.0"
-
-    def on_handshake(self, request):
-        handshake_data = self.handshake_data
-        if handshake_data is None:
-            handshake_data = bytearray()
-            for value in self.protocol_version:
-                handshake_data.insert(0, value)
-            while len(handshake_data) < 4:
-                handshake_data.insert(0, 0)
-        return bytes(handshake_data)
 
     def on_auto_match(self, request):
         if request.tag == b"\x01":
@@ -293,16 +285,6 @@ class Bolt3Script(BoltScript):
     }
 
     server_agent = "Neo4j/3.5.0"
-
-    def on_handshake(self, request):
-        handshake_data = self.handshake_data
-        if handshake_data is None:
-            handshake_data = bytearray()
-            for value in self.protocol_version:
-                handshake_data.insert(0, value)
-            while len(handshake_data) < 4:
-                handshake_data.insert(0, 0)
-        return bytes(handshake_data)
 
     def on_auto_match(self, request):
         if request.tag == b"\x01":
@@ -340,21 +322,48 @@ class Bolt4x0Script(BoltScript):
 
     server_agent = "Neo4j/4.0.0"
 
-    def on_handshake(self, request):
-        handshake_data = self.handshake_data
-        if handshake_data is None:
-            handshake_data = bytearray()
-            for value in self.protocol_version:
-                handshake_data.insert(0, value)
-            while len(handshake_data) < 4:
-                handshake_data.insert(0, 0)
-        return bytes(handshake_data)
+    def on_auto_match(self, request):
+        if request.tag == b"\x01":
+            yield Structure(b"\x70", {
+                "connection_id": "bolt-0",
+                "server": self.server_agent,
+            })
+        else:
+            yield Structure(b"\x70", {})
+
+
+class Bolt4x1Script(BoltScript):
+
+    protocol_version = (4, 1)
+
+    messages = {
+        "C": {
+            b"\x01": "HELLO",
+            b"\x02": "GOODBYE",
+            b"\x0F": "RESET",
+            b"\x10": "RUN",
+            b"\x11": "BEGIN",
+            b"\x12": "COMMIT",
+            b"\x13": "ROLLBACK",
+            b"\x2F": "DISCARD",
+            b"\x3F": "PULL",
+        },
+        "S": {
+            b"\x70": "SUCCESS",
+            b"\x71": "RECORD",
+            b"\x7E": "IGNORED",
+            b"\x7F": "FAILURE",
+        },
+    }
+
+    server_agent = "Neo4j/4.1.0"
 
     def on_auto_match(self, request):
         if request.tag == b"\x01":
             yield Structure(b"\x70", {
                 "connection_id": "bolt-0",
                 "server": self.server_agent,
+                "routing": None,
             })
         else:
             yield Structure(b"\x70", {})

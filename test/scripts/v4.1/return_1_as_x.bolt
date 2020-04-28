@@ -1,0 +1,10 @@
+!: BOLT 4.1
+!: AUTO HELLO
+!: AUTO GOODBYE
+!: AUTO RESET
+
+C: RUN "RETURN $x" {"x": 1} {}
+   PULL {"n": -1}
+S: SUCCESS {"fields": ["x"], "qid": 789}
+   RECORD [1]
+   SUCCESS {}

@@ -38,7 +38,7 @@ async def test_v1():
     async with BoltStubService.load(script("v1", "return_1_as_x.bolt")) as service:
 
         # Given
-        with Connection.open(*service.addresses, auth=service.auth) as cx:
+        with Connection.open(*service.addresses, auth=service.auth, bolt_versions=[(1, 0)]) as cx:
 
             # When
             records = []
@@ -112,7 +112,7 @@ async def test_v3_mismatch():
 @mark.asyncio
 async def test_v4x0():
 
-    async with BoltStubService.load(script("v4", "return_1_as_x.bolt")) as service:
+    async with BoltStubService.load(script("v4.0", "return_1_as_x.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:
@@ -132,7 +132,7 @@ async def test_v4x0():
 @mark.asyncio
 async def test_v4x0_explicit():
 
-    async with BoltStubService.load(script("v4", "return_1_as_x_explicit.bolt")) as service:
+    async with BoltStubService.load(script("v4.0", "return_1_as_x_explicit.bolt")) as service:
 
         # Given
         with Connection.open(*service.addresses, auth=service.auth) as cx:
@@ -146,6 +146,26 @@ async def test_v4x0_explicit():
             cx.send_all()
             cx.fetch_all()
 
+
+@mark.asyncio
+async def test_v4x1():
+
+    async with BoltStubService.load(script("v4.1", "return_1_as_x.bolt")) as service:
+
+        # Given
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
+
+            # When
+            records = []
+            cx.run("RETURN $x", {"x": 1})
+            cx.pull(-1, -1, records)
+            cx.send_all()
+            cx.fetch_all()
+
             # Then
             assert records == [[1]]
-            assert cx.bolt_version == (4, 0)
+            assert cx.bolt_version == (4, 1)
+
+            # Then
+            assert records == [[1]]
+            assert cx.bolt_version == (4, 1)
