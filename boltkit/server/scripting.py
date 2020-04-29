@@ -165,6 +165,9 @@ class BoltScript:
                     elif tag == "<SLEEP>":
                         out.append(ServerSleepLine(fields[0]))
                         out[-1].line_no = line_no
+                    elif tag == "<NOOP>":
+                        out.append(ServerNoOpLine())
+                        out[-1].line_no = line_no
                     else:
                         raise ValueError("Unknown command %r" % (tag,))
                 else:
@@ -383,6 +386,10 @@ class Line:
     async def action(self, actor):
         pass
 
+    @classmethod
+    def is_compatible(cls, protocol_version):
+        return True
+
 
 class ClientLine(Line):
 
@@ -495,6 +502,24 @@ class ServerSleepLine(ServerLine):
     async def action(self, actor):
         actor.log("%s", self)
         await sleep(self.delay)
+
+
+class ServerNoOpLine(ServerLine):
+
+    @classmethod
+    def is_compatible(cls, protocol_version):
+        return protocol_version >= (4, 1)
+
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return "S: <NOOP>"
+
+    async def action(self, actor):
+        actor.log("%s", self)
+        actor.writer.write(b"\x00\x00")
+        await actor.writer.drain()
 
 
 class ServerExitLine(ServerLine):

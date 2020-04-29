@@ -169,3 +169,30 @@ async def test_v4x1():
             # Then
             assert records == [[1]]
             assert cx.bolt_version == (4, 1)
+
+
+@mark.asyncio
+async def test_v4x1_with_keep_alive():
+    from boltkit.watcher import watch
+    from logging import DEBUG
+    watch("boltkit", level=DEBUG)
+
+    async with BoltStubService.load(script("v4.1", "keep_alive.bolt")) as service:
+
+        # Given
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
+
+            # When
+            records = []
+            cx.run("RETURN $x", {"x": 1})
+            cx.pull(-1, -1, records)
+            cx.send_all()
+            cx.fetch_all()
+
+            # Then
+            assert records == [[1]]
+            assert cx.bolt_version == (4, 1)
+
+            # Then
+            assert records == [[1]]
+            assert cx.bolt_version == (4, 1)

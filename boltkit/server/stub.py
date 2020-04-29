@@ -198,8 +198,12 @@ class BoltActor:
         return Address(self.writer.transport.get_extra_info("sockname"))
 
     async def play(self):
+        protocol_version = self.script.protocol_version
         try:
             for line in self.script:
+                if not line.is_compatible(protocol_version):
+                    raise ValueError("Script line %s is not compatible "
+                                     "with protocol version %r" % (line, protocol_version))
                 try:
                     await line.action(self)
                 except ScriptMismatch as error:
