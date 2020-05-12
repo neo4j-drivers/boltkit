@@ -36,6 +36,15 @@ package_metadata = {
     "entry_points": {
         "console_scripts": [
             "bolt = boltkit.__main__:bolt",
+            "neoctrl-download = boltkit.legacy.controller:download",
+            "neoctrl-install = boltkit.legacy.controller:install",
+            "neoctrl-cluster = boltkit.legacy.cluster:cluster",
+            "neoctrl-start = boltkit.legacy.controller:start",
+            "neoctrl-stop = boltkit.legacy.controller:stop",
+            "neoctrl-set-initial-password = boltkit.legacy.controller:set_initial_password",
+            "neoctrl-create-user = boltkit.legacy.controller:create_user",
+            "neoctrl-configure = boltkit.legacy.controller:configure",
+            "neotest = boltkit.legacy.controller:test",
         ],
     },
     "packages": packages,
