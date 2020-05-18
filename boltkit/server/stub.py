@@ -173,6 +173,8 @@ class BoltStubService:
                 writer.write_eof()
             except OSError:
                 pass
+            except AttributeError:
+                pass
             await self._on_disconnect(server_address.port_number)
 
     async def _on_disconnect(self, port):
