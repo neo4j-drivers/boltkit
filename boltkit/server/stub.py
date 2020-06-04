@@ -19,15 +19,28 @@
 # limitations under the License.
 
 
-from asyncio import new_event_loop, start_server, sleep, CancelledError, ensure_future, \
-    set_event_loop
+from asyncio import (
+    new_event_loop,
+    start_server,
+    sleep,
+    CancelledError,
+    ensure_future,
+    set_event_loop,
+)
 from logging import getLogger
-from threading import Event, Thread
+from threading import (
+    Event,
+    Thread,
+)
 
 from boltkit.addressing import Address
 from boltkit.packstream import PackStream
-from boltkit.server.scripting import ServerExit, ScriptMismatch, BoltScript, \
-    ClientMessageLine
+from boltkit.server.scripting import (
+    ServerExit,
+    ScriptMismatch,
+    BoltScript,
+    ClientMessageLine,
+)
 
 
 log = getLogger("boltkit")
@@ -128,8 +141,12 @@ class BoltStubService:
         set_event_loop(self.loop)
         try:
             self.loop.run_until_complete(self._a_run())
-        except Exception as e:
-            self._exception = e
+        except TimeoutError as error:
+            self._exception = error
+            scripts = [(self.scripts[key].port, self.scripts[key].filename) for key in self.scripts]
+            log.error("{}; {}".format(scripts, error))
+        except Exception as error:
+            self._exception = error
             raise
         finally:
             self.loop.stop()
@@ -165,8 +182,9 @@ class BoltStubService:
             await actor.play()
         except ServerExit:
             pass
-        except Exception as e:
-            self._exception = e
+        except Exception as error:
+            log.error("Stub server failed to read or write; {}".format(error))
+            self._exception = error
         finally:
             log.debug("[#%04X]  S: <HANGUP>", server_address.port_number)
             try:
@@ -179,12 +197,15 @@ class BoltStubService:
 
     async def _on_disconnect(self, port):
         if self.exit_on_disconnect:
-            server = self.servers[port]
-            server.close()
-            await server.wait_closed()
-            del self.servers[port]
-            if not self.servers:
-                self.stop()
+            try:
+                server = self.servers[port]
+                server.close()
+                await server.wait_closed()
+                del self.servers[port]
+                if not self.servers:
+                    self.stop()
+            except Exception as error:
+                log.error("Failed to close server on port {}; {}".format(port, error))
 
 
 class BoltActor:
@@ -204,20 +225,23 @@ class BoltActor:
         try:
             for line in self.script:
                 if not line.is_compatible(protocol_version):
-                    raise ValueError("Script line %s is not compatible "
-                                     "with protocol version %r" % (line, protocol_version))
+                    raise ValueError("Script line %s is not compatible with protocol version %r" % (line, protocol_version))
                 try:
                     await line.action(self)
                 except ScriptMismatch as error:
                     # Attach context information and re-raise
                     error.script = self.script
                     error.line_no = line.line_no
+                    log.error("Stub server failed to replay; {}".format(error))
                     raise
             await ClientMessageLine.default_action(self)
         except (ConnectionError, OSError):
             # It's likely the client has gone away, so we can
             # safely drop out and silence the error. There's no
             # point in flagging a broken client from a test helper.
+            return
+        except Exception as error:
+            log.error("Stub server failed; {}".format(error))
             return
 
     def log(self, text, *args):
