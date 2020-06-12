@@ -40,8 +40,8 @@ from uuid import uuid4
 
 from .addressing import Address
 from .bytetools import h
-from .driver import CLIENT, SERVER, BOLT, MAX_BOLT_VERSION
-from .packstream import UINT_16, INT_32, Structure, pack, unpack
+from .driver import CLIENT, SERVER, BOLT
+from .packstream import UINT_16, Structure, pack, unpack
 from .watcher import watch
 
 TIMEOUT = 30
@@ -62,6 +62,7 @@ server_agents = {
 }
 
 default_bolt_version = 2
+
 
 def message_repr(v, message):
     name = next(key for key, value in chain(CLIENT[v].items(), SERVER[v].items()) if value == message.tag)
@@ -90,6 +91,11 @@ class Line(Item):
 
 
 class ExitCommand(Item):
+
+    pass
+
+
+class NoOpCommand(Item):
 
     pass
 
@@ -138,6 +144,8 @@ class Script(object):
         tag, _, data = message.partition(" ")
         if tag == "<EXIT>":
             return ExitCommand()
+        elif tag == "<NOOP>":
+            return NoOpCommand()
         else:
             raise ValueError("Unknown command %s" % tag)
 
@@ -378,6 +386,9 @@ class StubServer(Thread):
             elif isinstance(response, ExitCommand):
                 self.stop()
                 raise SystemExit(EXIT_OK)
+            elif isinstance(response, NoOpCommand):
+                log.debug("S: <NOOP>")
+                self.send_chunk(sock)
             else:
                 raise RuntimeError("Unknown response type %r" % (response,))
 
@@ -412,7 +423,7 @@ def stub():
     parser.add_argument("port", type=int, help="port number to listen for connection on")
     parser.add_argument("script", help="Bolt script file")
     parsed = parser.parse_args()
-    watch("boltkit.server")
+    watch("boltkit")
     server = StubServer(("127.0.0.1", parsed.port), parsed.script)
     server.start()
     try:

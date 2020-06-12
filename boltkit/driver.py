@@ -606,11 +606,14 @@ class Connection:
 
         # Receive chunks of data until chunk_size == 0
         data = []
-        chunk_size = -1
-        while chunk_size != 0:
-            chunk_size, = raw_unpack(UINT_16, self.socket.recv(2))
-            if chunk_size > 0:
-                data.append(self.socket.recv(chunk_size))
+        while not data:
+            chunk_size = -1
+            while chunk_size != 0:
+                chunk_size, = raw_unpack(UINT_16, self.socket.recv(2))
+                if chunk_size > 0:
+                    data.append(self.socket.recv(chunk_size))
+            if not data:
+                log.debug("S: <NOOP>")
         message = unpack(b"".join(data))
 
         # Handle message

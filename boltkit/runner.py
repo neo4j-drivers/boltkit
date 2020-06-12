@@ -18,6 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+from logging import DEBUG
 from sys import argv
 
 from .driver import Connection
@@ -25,7 +27,7 @@ from .watcher import watch
 
 
 def run():
-    watch("boltkit.driver")
+    watch("boltkit", level=DEBUG)
     with Connection.open(("localhost", 9001), auth=("neo4j", "password"), bolt_versions=[4.1]) as cx:
         records = []
         cx.run(argv[1], {})
