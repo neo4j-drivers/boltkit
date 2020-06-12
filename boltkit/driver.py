@@ -118,190 +118,191 @@ BOLT = b"\x60\x60\xB0\x17"
 #
 # The client sends messages from the selection below:
 MAX_BOLT_VERSION = 4
-CLIENT = [None] * (MAX_BOLT_VERSION + 1)
-CLIENT[1] = {
-    "INIT": 0x01,           # INIT <user_agent> <auth_token>
-                            # -> SUCCESS - connection initialised
-                            # -> FAILURE - init failed, disconnect (reconnect to retry)
-                            #
-                            # Initialisation is carried out once per connection, immediately
-                            # after version negotiation. Before this, no other messages may
-                            # validly be exchanged. INIT bundles with it two pieces of data:
-                            # a user agent string and a map of auth information. More detail on
-                            # on this can be found in the ConnectionSettings class below.
+CLIENT = {
+    1: {
+        "INIT": 0x01,           # INIT <user_agent> <auth_token>
+                                # -> SUCCESS - connection initialised
+                                # -> FAILURE - init failed, disconnect (reconnect to retry)
+                                #
+                                # Initialisation is carried out once per connection, immediately
+                                # after version negotiation. Before this, no other messages may
+                                # validly be exchanged. INIT bundles with it two pieces of data:
+                                # a user agent string and a map of auth information. More detail on
+                                # on this can be found in the ConnectionSettings class below.
 
-    "ACK_FAILURE": 0x0E,    # ACK_FAILURE
-                            # -> SUCCESS - failure acknowledged
-                            # -> FAILURE - protocol error, disconnect
-                            #
-                            # When a FAILURE occurs, no further actions may be carried out
-                            # until that failure has been acknowledged by the client. This
-                            # is a safety mechanism to prevent actions from being carried out
-                            # by the server when several requests have been optimistically sent
-                            # at the same time.
+        "ACK_FAILURE": 0x0E,    # ACK_FAILURE
+                                # -> SUCCESS - failure acknowledged
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # When a FAILURE occurs, no further actions may be carried out
+                                # until that failure has been acknowledged by the client. This
+                                # is a safety mechanism to prevent actions from being carried out
+                                # by the server when several requests have been optimistically sent
+                                # at the same time.
 
-    "RESET": 0x0F,          # RESET
-                            # -> SUCCESS - connection reset
-                            # -> FAILURE - protocol error, disconnect
-                            #
-                            # A RESET is used to clear the connection state back to how it was
-                            # immediately following initialisation. Specifically, any
-                            # outstanding failure will be acknowledged, any result stream will
-                            # be discarded and any transaction will be rolled back. This is
-                            # used primarily by the connection pool.
+        "RESET": 0x0F,          # RESET
+                                # -> SUCCESS - connection reset
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # A RESET is used to clear the connection state back to how it was
+                                # immediately following initialisation. Specifically, any
+                                # outstanding failure will be acknowledged, any result stream will
+                                # be discarded and any transaction will be rolled back. This is
+                                # used primarily by the connection pool.
 
-    "RUN": 0x10,            # RUN <statement> <parameters>
-                            # -> SUCCESS - statement accepted
-                            # -> FAILURE - statement not accepted
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # RUN is used to execute a Cypher statement and is paired with
-                            # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
-                            # results respectively.
-                            # TODO
+        "RUN": 0x10,            # RUN <statement> <parameters>
+                                # -> SUCCESS - statement accepted
+                                # -> FAILURE - statement not accepted
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # RUN is used to execute a Cypher statement and is paired with
+                                # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
+                                # results respectively.
+                                # TODO
 
-    "DISCARD_ALL": 0x2F,    # DISCARD_ALL
-                            # -> SUCCESS - result discarded
-                            # -> FAILURE - no result to discard
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # TODO
+        "DISCARD_ALL": 0x2F,    # DISCARD_ALL
+                                # -> SUCCESS - result discarded
+                                # -> FAILURE - no result to discard
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
 
-    "PULL_ALL": 0x3F,       # PULL_ALL
-                            # .. [RECORD*] - zero or more RECORDS may be returned first
-                            # -> SUCCESS - result complete
-                            # -> FAILURE - no result to pull
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # TODO
+        "PULL_ALL": 0x3F,       # PULL_ALL
+                                # .. [RECORD*] - zero or more RECORDS may be returned first
+                                # -> SUCCESS - result complete
+                                # -> FAILURE - no result to pull
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+    },
+    3: {
+        "HELLO": 0x01,          # HELLO <headers>
+                                # -> SUCCESS - connection initialised
+                                # -> FAILURE - init failed, disconnect (reconnect to retry)
+                                #
+                                # Initialisation is carried out once per connection, immediately
+                                # after version negotiation. Before this, no other messages may
+                                # validly be exchanged. INIT bundles with it two pieces of data:
+                                # a user agent string and a map of auth information. More detail on
+                                # on this can be found in the ConnectionSettings class below.
+
+        "GOODBYE": 0x02,        # GOODBYE
+                                # TODO
+
+        "RESET": 0x0F,          # RESET
+                                # -> SUCCESS - connection reset
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # A RESET is used to clear the connection state back to how it was
+                                # immediately following initialisation. Specifically, any
+                                # outstanding failure will be acknowledged, any result stream will
+                                # be discarded and any transaction will be rolled back. This is
+                                # used primarily by the connection pool.
+
+        "RUN": 0x10,            # RUN <statement> <parameters>
+                                # -> SUCCESS - statement accepted
+                                # -> FAILURE - statement not accepted
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # RUN is used to execute a Cypher statement and is paired with
+                                # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
+                                # results respectively.
+                                # TODO
+
+        "BEGIN": 0x11,          # BEGIN
+                                # TODO
+
+        "COMMIT": 0x12,         # COMMIT
+                                # TODO
+
+        "ROLLBACK": 0x13,       # ROLLBACK
+                                # TODO
+
+        "DISCARD_ALL": 0x2F,    # DISCARD_ALL
+                                # -> SUCCESS - result discarded
+                                # -> FAILURE - no result to discard
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+
+        "PULL_ALL": 0x3F,       # PULL_ALL
+                                # .. [RECORD*] - zero or more RECORDS may be returned first
+                                # -> SUCCESS - result complete
+                                # -> FAILURE - no result to pull
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+    },
+    4: {
+        "HELLO": 0x01,          # HELLO <headers>
+                                # -> SUCCESS - connection initialised
+                                # -> FAILURE - init failed, disconnect (reconnect to retry)
+                                #
+                                # Initialisation is carried out once per connection, immediately
+                                # after version negotiation. Before this, no other messages may
+                                # validly be exchanged. INIT bundles with it two pieces of data:
+                                # a user agent string and a map of auth information. More detail on
+                                # on this can be found in the ConnectionSettings class below.
+
+        "GOODBYE": 0x02,        # GOODBYE
+                                # TODO
+
+        "RESET": 0x0F,          # RESET
+                                # -> SUCCESS - connection reset
+                                # -> FAILURE - protocol error, disconnect
+                                #
+                                # A RESET is used to clear the connection state back to how it was
+                                # immediately following initialisation. Specifically, any
+                                # outstanding failure will be acknowledged, any result stream will
+                                # be discarded and any transaction will be rolled back. This is
+                                # used primarily by the connection pool.
+
+        "RUN": 0x10,            # RUN <statement> <parameters>
+                                # -> SUCCESS - statement accepted
+                                # -> FAILURE - statement not accepted
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # RUN is used to execute a Cypher statement and is paired with
+                                # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
+                                # results respectively.
+                                # TODO
+
+        "BEGIN": 0x11,          # BEGIN
+                                # TODO
+
+        "COMMIT": 0x12,         # COMMIT
+                                # TODO
+
+        "ROLLBACK": 0x13,       # ROLLBACK
+                                # TODO
+
+        "DISCARD": 0x2F,        # DISCARD <n>
+                                # -> SUCCESS - result discarded
+                                # -> FAILURE - no result to discard
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+
+        "PULL": 0x3F,           # PULL <n>
+                                # .. [RECORD*] - zero or more RECORDS may be returned first
+                                # -> SUCCESS - result complete
+                                # -> FAILURE - no result to pull
+                                # -> IGNORED - request ignored (due to prior failure)
+                                #
+                                # TODO
+    },
 }
 CLIENT[2] = CLIENT[1]
-CLIENT[3] = {
-    "HELLO": 0x01,          # HELLO <headers>
-                            # -> SUCCESS - connection initialised
-                            # -> FAILURE - init failed, disconnect (reconnect to retry)
-                            #
-                            # Initialisation is carried out once per connection, immediately
-                            # after version negotiation. Before this, no other messages may
-                            # validly be exchanged. INIT bundles with it two pieces of data:
-                            # a user agent string and a map of auth information. More detail on
-                            # on this can be found in the ConnectionSettings class below.
-
-    "GOODBYE": 0x02,        # GOODBYE
-                            # TODO
-
-    "RESET": 0x0F,          # RESET
-                            # -> SUCCESS - connection reset
-                            # -> FAILURE - protocol error, disconnect
-                            #
-                            # A RESET is used to clear the connection state back to how it was
-                            # immediately following initialisation. Specifically, any
-                            # outstanding failure will be acknowledged, any result stream will
-                            # be discarded and any transaction will be rolled back. This is
-                            # used primarily by the connection pool.
-
-    "RUN": 0x10,            # RUN <statement> <parameters>
-                            # -> SUCCESS - statement accepted
-                            # -> FAILURE - statement not accepted
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # RUN is used to execute a Cypher statement and is paired with
-                            # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
-                            # results respectively.
-                            # TODO
-
-    "BEGIN": 0x11,          # BEGIN
-                            # TODO
-
-    "COMMIT": 0x12,         # COMMIT
-                            # TODO
-
-    "ROLLBACK": 0x13,       # ROLLBACK
-                            # TODO
-
-    "DISCARD_ALL": 0x2F,    # DISCARD_ALL
-                            # -> SUCCESS - result discarded
-                            # -> FAILURE - no result to discard
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # TODO
-
-    "PULL_ALL": 0x3F,       # PULL_ALL
-                            # .. [RECORD*] - zero or more RECORDS may be returned first
-                            # -> SUCCESS - result complete
-                            # -> FAILURE - no result to pull
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # TODO
-}
-CLIENT[4] = {
-    "HELLO": 0x01,          # HELLO <headers>
-                            # -> SUCCESS - connection initialised
-                            # -> FAILURE - init failed, disconnect (reconnect to retry)
-                            #
-                            # Initialisation is carried out once per connection, immediately
-                            # after version negotiation. Before this, no other messages may
-                            # validly be exchanged. INIT bundles with it two pieces of data:
-                            # a user agent string and a map of auth information. More detail on
-                            # on this can be found in the ConnectionSettings class below.
-
-    "GOODBYE": 0x02,        # GOODBYE
-                            # TODO
-
-    "RESET": 0x0F,          # RESET
-                            # -> SUCCESS - connection reset
-                            # -> FAILURE - protocol error, disconnect
-                            #
-                            # A RESET is used to clear the connection state back to how it was
-                            # immediately following initialisation. Specifically, any
-                            # outstanding failure will be acknowledged, any result stream will
-                            # be discarded and any transaction will be rolled back. This is
-                            # used primarily by the connection pool.
-
-    "RUN": 0x10,            # RUN <statement> <parameters>
-                            # -> SUCCESS - statement accepted
-                            # -> FAILURE - statement not accepted
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # RUN is used to execute a Cypher statement and is paired with
-                            # either PULL_ALL or DISCARD_ALL to retrieve or throw away the
-                            # results respectively.
-                            # TODO
-
-    "BEGIN": 0x11,          # BEGIN
-                            # TODO
-
-    "COMMIT": 0x12,         # COMMIT
-                            # TODO
-
-    "ROLLBACK": 0x13,       # ROLLBACK
-                            # TODO
-
-    "DISCARD": 0x2F,        # DISCARD <n>
-                            # -> SUCCESS - result discarded
-                            # -> FAILURE - no result to discard
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # TODO
-
-    "PULL": 0x3F,           # PULL <n>
-                            # .. [RECORD*] - zero or more RECORDS may be returned first
-                            # -> SUCCESS - result complete
-                            # -> FAILURE - no result to pull
-                            # -> IGNORED - request ignored (due to prior failure)
-                            #
-                            # TODO
-}
+CLIENT[4.1] = CLIENT[4]
 #
 # The server responds with one or more of these for each request:
-SERVER = [None] * (MAX_BOLT_VERSION + 1)
-SERVER[1] = {
+SERVER = {1: {
     "SUCCESS": 0x70,            # SUCCESS <metadata>
     "RECORD": 0x71,             # RECORD <value>
     "IGNORED": 0x7E,            # IGNORED <metadata>
     "FAILURE": 0x7F,            # FAILURE <metadata>
-}
-SERVER[4] = SERVER[3] = SERVER[2] = SERVER[1]
+}}
+SERVER[4.1] = SERVER[4] = SERVER[3] = SERVER[2] = SERVER[1]
 
 
 # TODO
@@ -338,7 +339,7 @@ class Connection:
             bolt_versions = sorted([v for v, x in enumerate(CLIENT)
                                     if x is not None], reverse=True)
         # Raise an error if we're including any non-supported versions
-        if any(v < 0 or v > MAX_BOLT_VERSION for v in bolt_versions):
+        if not all(v in CLIENT for v in bolt_versions):
             raise ValueError("This client does not support all "
                              "Bolt versions in %r" % bolt_versions)
         # Ensure we send exactly 4 versions, padding with zeroes if necessary
@@ -350,15 +351,19 @@ class Connection:
         socket address.
         """
         cx = None
-        handshake_data = BOLT + b"".join(raw_pack(UINT_32, version)
-                                         for version in bolt_versions)
+        handshake_data = bytearray(BOLT)
+        for version in bolt_versions:
+            major, _, minor = str(version).partition(".")
+            handshake_data.extend(bytearray([0, 0, int(minor or 0), int(major or 0)]))
+        handshake_data = handshake_data[:20]
+        handshake_data = handshake_data + (b"\x00" * (20 - len(handshake_data)))
         s = socket(family={2: AF_INET, 4: AF_INET6}[len(address)])
         try:
             s.connect(address)
             s.sendall(handshake_data)
             raw_bolt_version = s.recv(4)
             if raw_bolt_version:
-                bolt_version, = raw_unpack(UINT_32, raw_bolt_version)
+                bolt_version = float("%s.%s" % (raw_bolt_version[3], raw_bolt_version[2]))
                 if bolt_version > 0 and bolt_version in bolt_versions:
                     cx = cls(s, bolt_version, auth, user_agent)
                 else:

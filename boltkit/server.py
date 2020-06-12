@@ -162,8 +162,11 @@ class Script(object):
                     if command == "AUTO":
                         self.auto.append(self.parse_message(rest))
                     if command == "BOLT":
-                        self.bolt_version = int(rest)
-                        if self.bolt_version < 0 or self.bolt_version > MAX_BOLT_VERSION or CLIENT[self.bolt_version] is None:
+                        if "." in rest:
+                            self.bolt_version = float(rest)
+                        else:
+                            self.bolt_version = int(rest)
+                        if self.bolt_version not in CLIENT:
                             raise RuntimeError("Protocol version %r in script %r is not available "
                                                "in this version of BoltKit" % (self.bolt_version, file_name))
                 elif mode in "CS":
@@ -290,21 +293,22 @@ class StubServer(Thread):
                 log.error("C: <#?@!>")
             self.stop()
             return
-        raw_data = sock.recv(16)
-        suggested_version_1, = raw_unpack(INT_32, raw_data, 0)
-        suggested_version_2, = raw_unpack(INT_32, raw_data, 4)
-        suggested_version_3, = raw_unpack(INT_32, raw_data, 8)
-        suggested_version_4, = raw_unpack(INT_32, raw_data, 12)
+        raw_data = bytearray(sock.recv(16))
+        suggested_version_1 = float("%s.%s" % (raw_data[3], raw_data[2]))
+        suggested_version_2 = float("%s.%s" % (raw_data[7], raw_data[6]))
+        suggested_version_3 = float("%s.%s" % (raw_data[11], raw_data[10]))
+        suggested_version_4 = float("%s.%s" % (raw_data[15], raw_data[14]))
         client_requested_versions = [suggested_version_1, suggested_version_2, suggested_version_3, suggested_version_4]
-        log.debug("C: <VERSION> [0x%08x, 0x%08x, 0x%08x, 0x%08x]" % tuple(client_requested_versions))
+        log.debug("C: <VERSION> [%r, %r, %r, %r]" % tuple(client_requested_versions))
 
         v = self.script.bolt_version
         if v not in client_requested_versions:
             raise RuntimeError("Script protocol version %r not offered by client" % v)
 
         # only single protocol version is currently supported
-        response = raw_pack(INT_32, v)
-        log.debug("S: <VERSION> 0x%08x" % v)
+        major, _, minor = str(v).partition(".")
+        response = bytearray([0, 0, int(minor or 0), int(major or 0)])
+        log.debug("S: <VERSION> %r" % v)
         self.peers[sock].bolt_version = v
         sock.send(response)
 

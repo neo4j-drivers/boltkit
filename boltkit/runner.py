@@ -25,8 +25,8 @@ from .watcher import watch
 
 
 def run():
-    watch("boltkit.connection")
-    with Connection.open(("localhost", 7687), auth=("neo4j", "password")) as cx:
+    watch("boltkit.driver")
+    with Connection.open(("localhost", 9001), auth=("neo4j", "password"), bolt_versions=[4.1]) as cx:
         records = []
         cx.run(argv[1], {})
         cx.pull(-1, -1, records)
