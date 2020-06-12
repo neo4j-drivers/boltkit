@@ -1,0 +1,16 @@
+!: BOLT 4
+!: AUTO HELLO
+!: AUTO GOODBYE
+!: AUTO RESET
+
+C: RUN "UNWIND range(1, 5) AS n RETURN n" {} {}
+   PULL {"n": 3}
+S: SUCCESS {"fields": ["1"], "qid": 789}
+   RECORD [1]
+   RECORD [2]
+   RECORD [3]
+   SUCCESS {"has_more": true}
+C: PULL {"n": 3}
+S: RECORD [4]
+   RECORD [5]
+   SUCCESS {"bookmark": "1a7070d0-088c-4fc4-b389-58403f389400:1", "type": "r", "t_last": 0, "db": "neo4j"}

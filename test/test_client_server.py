@@ -20,11 +20,13 @@
 
 
 from unittest import TestCase
+import pytest
 
 from boltkit.client import Connection, SERVER
 from boltkit.server import Neo4jService
 
 
+@pytest.mark.skip()
 class ClientServerTestCase(TestCase):
 
     def test_connect_and_disconnect(self):

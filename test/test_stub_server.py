@@ -130,6 +130,34 @@ async def test_v4x0():
 
 
 @mark.asyncio
+async def test_v4x0_with_pull_n():
+
+    async with BoltStubService.load(script("v4.0", "return_5_records.bolt")) as service:
+
+        # Given
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
+
+            records = []
+            cx.run("UNWIND range(1, 5) AS n RETURN n")
+
+            # When
+            cx.pull(3, -1, records)
+            cx.send_all()
+            cx.fetch_all()
+
+            # Then
+            assert records == [[1], [2], [3]]
+
+            # When
+            cx.pull(3, -1, records)
+            cx.send_all()
+            cx.fetch_all()
+
+            # Then
+            assert records == [[1], [2], [3], [4], [5]]
+
+
+@mark.asyncio
 async def test_v4x0_explicit():
 
     async with BoltStubService.load(script("v4.0", "return_1_as_x_explicit.bolt")) as service:
@@ -173,9 +201,6 @@ async def test_v4x1():
 
 @mark.asyncio
 async def test_v4x1_with_keep_alive():
-    from boltkit.watcher import watch
-    from logging import DEBUG
-    watch("boltkit", level=DEBUG)
 
     async with BoltStubService.load(script("v4.1", "keep_alive.bolt")) as service:
 
