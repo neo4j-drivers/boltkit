@@ -32,6 +32,7 @@ def script(*paths):
     return join(dirname(import_module("test").__file__), "scripts", *paths)
 
 
+@mark.skip
 @mark.asyncio
 async def test_v1():
 
@@ -52,6 +53,7 @@ async def test_v1():
             assert cx.bolt_version == (1, 0)
 
 
+@mark.skip
 @mark.asyncio
 async def test_v2():
 
@@ -221,3 +223,27 @@ async def test_v4x1_with_keep_alive():
             # Then
             assert records == [[1]]
             assert cx.bolt_version == (4, 1)
+
+
+@mark.asyncio
+async def test_v4x2():
+
+    async with BoltStubService.load(script("v4.2", "return_1_as_x.bolt")) as service:
+
+        # Given
+        with Connection.open(*service.addresses, auth=service.auth) as cx:
+
+            # When
+            records = []
+            cx.run("RETURN $x", {"x": 1})
+            cx.pull(-1, -1, records)
+            cx.send_all()
+            cx.fetch_all()
+
+            # Then
+            assert records == [[1]]
+            assert cx.bolt_version == (4, 2)
+
+            # Then
+            assert records == [[1]]
+            assert cx.bolt_version == (4, 2)

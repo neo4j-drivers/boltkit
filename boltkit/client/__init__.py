@@ -291,6 +291,7 @@ CLIENT[(4, 0)] = {
                             # TODO
 }
 CLIENT[(4, 1)] = CLIENT[(4, 0)]
+CLIENT[(4, 2)] = CLIENT[(4, 1)]
 #
 # The server responds with one or more of these for each request:
 SERVER = {v: {
