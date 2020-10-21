@@ -24,8 +24,6 @@ import certifi
 import json
 from urllib3 import PoolManager, make_headers
 
-import boto3
-
 
 DIST_HOST = "dist.neo4j.org"
 
@@ -252,12 +250,15 @@ class Distributor:
     def download_from_s3(self, edition, version, package_format):
         """ Download a release from an S3 bucket.
         """
+        import boto3
+
         release = Release(version)
         package = release.package(edition, package_format)
         print("Downloading {} from {}".format(package.name, "S3"))
 
         bucket = "quality.neotechnology.com"
         key = "internal-release/{}".format(package.name)
+
         s3 = boto3.client("s3")
         f = boto3.resource("s3").Bucket(bucket).Object(key)
 

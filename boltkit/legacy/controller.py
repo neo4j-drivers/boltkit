@@ -32,10 +32,6 @@ from subprocess import call, check_output, CalledProcessError
 from sys import stderr, stdin
 from time import sleep
 
-import boto
-from boto.s3.key import Key
-from boto.s3.connection import OrdinaryCallingFormat
-
 import boltkit.legacy.config as config
 
 try:
@@ -125,6 +121,10 @@ class Downloader(object):
     def download_s3(self, package):
         """ Download from private s3 distributions.
         """
+        import boto
+        from boto.s3.key import Key
+        from boto.s3.connection import OrdinaryCallingFormat
+
         package_path = path_join(self.path, package)
         aws_access_key_id = get_env_variable_or_raise_error("AWS_ACCESS_KEY_ID")
         aws_secret_access_key = get_env_variable_or_raise_error("AWS_SECRET_ACCESS_KEY")
