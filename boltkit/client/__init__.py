@@ -292,6 +292,16 @@ CLIENT[(4, 0)] = {
 }
 CLIENT[(4, 1)] = CLIENT[(4, 0)]
 CLIENT[(4, 2)] = CLIENT[(4, 1)]
+CLIENT[(4, 3)] = { 
+    **CLIENT[(4, 2)],       # Extends all the messages from the 4.2
+
+    "ROUTE": 0x66           # ROUTE <context> <database name>
+                            # -> SUCCESS - the routing table
+                            # -> FAILURE - something got wrong
+                            #
+                            # ROUTE is used to fetch the routing table
+}
+
 #
 # The server responds with one or more of these for each request:
 SERVER = {v: {
