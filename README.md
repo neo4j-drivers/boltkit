@@ -6,12 +6,13 @@ The library exposes a set of command line tools as well as a full Python API for
 
 ## Installation
 
-The package can be found on PyPI and can either run globally or within a _virtualenv_.
+Installation is via github and can either run globally or within a _virtualenv_.
 Installation makes available a versatile command line tool, called `bolt`.
 
 ```
-$ pip install boltkit
+$ python3 -m pip install --user git+https://github.com/neo4j-drivers/boltkit@x.y#egg=boltkit
 ```
+where `x` and `y` are replaced with major and minor versions respectively.
 
 ```
 $ bolt --help
