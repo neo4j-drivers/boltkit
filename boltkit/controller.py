@@ -38,6 +38,9 @@ from boto.s3.connection import OrdinaryCallingFormat
 
 import boltkit.config as config
 
+import requests
+from requests.auth import HTTPBasicAuth
+
 try:
     from urllib.request import urlopen, Request, HTTPError
     from urllib.parse import urlparse
@@ -91,27 +94,20 @@ class Downloader(object):
         url = get_env_variable_or_raise_error("TEAMCITY_HOST") + "/" + package
         user = get_env_variable_or_raise_error("TEAMCITY_USER")
         password = get_env_variable_or_raise_error("TEAMCITY_PASSWORD")
-        auth_token = b"Basic " + b64encode(("%s:%s" % (user, password)).encode("iso-8859-1"))
-        request = Request(url, headers={"Authorization": auth_token})
         package_path = path_join(self.path, package)
 
         self.write("Downloading build from %s... " % url)
-        fin = urlopen(request)
+        r = requests.get(
+            url,
+            allow_redirects=True,
+            auth=HTTPBasicAuth(user, password)
+        )
         try:
-            try:
-                makedirs(self.path)
-            except OSError:
-                pass
-            with open(package_path, "wb") as fout:
-                more = True
-                while more:
-                    data = fin.read(8192)
-                    if data:
-                        fout.write(data)
-                    else:
-                        more = False
-        finally:
-            fin.close()
+            makedirs(self.path)
+        except OSError:
+            pass
+        with open(package_path, "wb") as fout:
+            fout.write(r.content)
 
         return package_path
 
@@ -209,7 +205,8 @@ class Downloader(object):
             raise ValueError("Unknown format %r" % package_format)
         package = template % (edition, package_version, package_format)
 
-        package = self.download_s3(package) if edition == "enterprise" and len(version_parts) != 3 else self.download_dist(package)
+        package = self.download_s3(package) if edition == "enterprise" and len(
+            version_parts) != 3 else self.download_dist(package)
         self.write("\r\n")
 
         return package
@@ -267,7 +264,7 @@ def create_self_signed_cert(cert_path, key_path):
     cert.get_subject().CN = "localhost"
     cert.set_serial_number(1000)
     cert.gmtime_adj_notBefore(0)
-    cert.gmtime_adj_notAfter(10*365*24*60*60)
+    cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
     cert.set_issuer(cert.get_subject())
     cert.set_pubkey(key)
     cert.sign(key, 'SHA512')
