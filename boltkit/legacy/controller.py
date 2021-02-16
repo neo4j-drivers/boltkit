@@ -32,6 +32,9 @@ from subprocess import call, check_output, CalledProcessError
 from sys import stderr, stdin
 from time import sleep
 
+import requests
+from requests.auth import HTTPBasicAuth
+
 import boltkit.legacy.config as config
 
 try:
@@ -94,27 +97,20 @@ class Downloader(object):
         url = get_env_variable_or_raise_error("TEAMCITY_HOST") + "/" + package
         user = get_env_variable_or_raise_error("TEAMCITY_USER")
         password = get_env_variable_or_raise_error("TEAMCITY_PASSWORD")
-        auth_token = b"Basic " + b64encode(("%s:%s" % (user, password)).encode("iso-8859-1"))
-        request = Request(url, headers={"Authorization": auth_token})
         package_path = path_join(self.path, package)
 
         self.write("Downloading build from %s... " % url)
-        fin = urlopen(request)
+        r = requests.get(
+            url,
+            allow_redirects=True,
+            auth=HTTPBasicAuth(user, password)
+        )
         try:
-            try:
-                makedirs(self.path)
-            except OSError:
-                pass
-            with open(package_path, "wb") as fout:
-                more = True
-                while more:
-                    data = fin.read(8192)
-                    if data:
-                        fout.write(data)
-                    else:
-                        more = False
-        finally:
-            fin.close()
+            makedirs(self.path)
+        except OSError:
+            pass
+        with open(package_path, "wb") as fout:
+            fout.write(r.content)
 
         return package_path
 
@@ -573,7 +569,6 @@ def _install(edition, version, path, **kwargs):
             raise
     else:
         return home
-
 
 def install():
     parser = ArgumentParser(
