@@ -41,6 +41,7 @@ import boltkit.config as config
 import requests
 from requests.auth import HTTPBasicAuth
 
+
 try:
     from urllib.request import urlopen, Request, HTTPError
     from urllib.parse import urlparse
@@ -562,7 +563,6 @@ def _install(edition, version, path, **kwargs):
             raise
     else:
         return home
-
 
 def install():
     parser = ArgumentParser(
