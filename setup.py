@@ -51,11 +51,12 @@ package_metadata = {
     "install_requires": [
         "boto",
         "boto3",
+        "docker",
         "certifi",
         "click~=7.0",
-        "docker",
-        "urllib3==1.25.4",
         'pyreadline>=2.1 ; platform_system=="Windows"',
+        "urllib3==1.25.4",
+        "requests",
     ],
     "license": "Apache License, Version 2.0",
     "classifiers": [
