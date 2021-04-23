@@ -49,6 +49,7 @@ INT_64 = ">q"       # signed 64-bit integer (two's complement)
 UINT_8 = ">B"       # unsigned 8-bit integer
 UINT_16 = ">H"      # unsigned 16-bit integer
 UINT_32 = ">I"      # unsigned 32-bit integer
+UINT_64 = ">Q"      # unsigned 32-bit integer
 FLOAT_64 = ">d"     # IEEE double-precision floating-point format
 
 

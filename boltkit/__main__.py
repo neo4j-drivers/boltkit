@@ -188,8 +188,9 @@ Run a Bolt proxy server.
 @click.option("-l", "--listen-addr", type=AddressParamType(), envvar="BOLT_LISTEN_ADDR")
 @click.option("-s", "--server-addr", type=AddressListParamType(), envvar="BOLT_SERVER_ADDR")
 @click.option("-v", "--verbose", count=True, callback=watch_log, expose_value=False, is_eager=True)
-def proxy(server_addr, listen_addr):
-    proxy_server = ProxyServer(server_addr, listen_addr)
+@click.option("-w", "--websocket", is_flag=True, default=False, type=click.BOOL, envvar="BOLT_IS_WEBSOCKET")
+def proxy(server_addr, listen_addr, websocket):
+    proxy_server = ProxyServer(server_addr, listen_addr, websocket)
     proxy_server.start()
 
 
