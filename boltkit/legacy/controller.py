@@ -299,7 +299,7 @@ class Controller(object):
         package = cls.download(edition, version, path, **kwargs)
         home = cls.extract(package, path)
         properties = config.common_config()
-        if version.startswith("4."):
+        if not version.startswith("3."):
             # Install a self-signed cert before server start.
             try:
                 makedirs(path_join(home, CERT_FOLDER))
