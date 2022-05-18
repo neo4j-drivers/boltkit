@@ -377,6 +377,10 @@ class Controller(object):
             neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
             output = _invoke([neo4j_admin_path, "set-initial-password", password])
             live_users_detected = b"password was not set" in output.lower()
+        elif self._neo4j_admin_dbms_available():
+            neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
+            output = _invoke([neo4j_admin_path, "dbms", "set-initial-password", password])
+            live_users_detected = b"password was not set" in output.lower()
         else:
             if self._auth_file_exists():
                 live_users_detected = True
@@ -391,6 +395,14 @@ class Controller(object):
             neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
             output = _invoke([neo4j_admin_path, "help"])
             return b"set-initial-password" in output
+        except CalledProcessError:
+            return False
+
+    def _neo4j_admin_dbms_available(self):
+        try:
+            neo4j_admin_path = path_join(self.home, "bin", self._neo4j_admin_script_name())
+            output = _invoke([neo4j_admin_path, "help"])
+            return b"dbms" in output
         except CalledProcessError:
             return False
 
